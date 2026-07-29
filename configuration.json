@@ -1,0 +1,16 @@
+{
+  "name": "Fleet Wolf Photo Capture",
+  "supportEmail": "you@fleetwolf.com",
+  "version": "1.0",
+  "items": [
+    {
+      "url": "https://YOUR-GITHUB-USERNAME.github.io/photo-addin/index.html",
+      "path": "DriveAppLink/",
+      "menuName": {
+        "en": "Take Photo"
+      },
+      "icon": "https://YOUR-GITHUB-USERNAME.github.io/photo-addin/icon.svg"
+    }
+  ],
+  "files": {}
+}
