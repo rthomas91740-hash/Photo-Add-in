@@ -99,6 +99,7 @@
     var deviceNameCache = {};
     var driverNameCache = {};
     var currentRecords = [];
+    var sessionInfo = null;
 
     function main() {
       document.getElementById('refreshBtn').addEventListener('click', loadPhotos);
@@ -268,6 +269,19 @@
       } else {
         fetchSession(send);
       }
+    }
+
+    function fetchSession(onReady) {
+      geotabApi.getSession(function (session) {
+        sessionInfo = {
+          database: session.database,
+          sessionId: session.sessionId,
+          userName: session.userName,
+          server: session.server || session.path || window.location.hostname
+        };
+        if (onReady) onReady();
+      });
+    }
 
     geotab.addin.fleetWolfPhotoGallery = function () {
       return {
