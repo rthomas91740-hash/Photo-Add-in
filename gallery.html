@@ -259,12 +259,27 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         })
-          .then(function (res) { return res.blob(); })
+          .then(function (res) {
+            var contentType = res.headers.get('content-type') || '';
+            if (contentType.indexOf('json') !== -1) {
+              // An image would never come back as JSON — this means
+              // the server sent an error instead of the photo.
+              return res.text().then(function (text) {
+                throw new Error('Server said: ' + text);
+              });
+            }
+            return res.blob();
+          })
           .then(function (blob) {
             imgEl.src = URL.createObjectURL(blob);
           })
-          .catch(function () {
+          .catch(function (err) {
             imgEl.alt = 'Failed to load image';
+            var wrapper = imgEl.parentNode;
+            var errDiv = document.createElement('div');
+            errDiv.style.cssText = 'color:#c00;font-size:11px;padding:6px 12px;word-break:break-all;';
+            errDiv.textContent = err.message || String(err);
+            wrapper.insertBefore(errDiv, imgEl.nextSibling);
           });
       }
 
