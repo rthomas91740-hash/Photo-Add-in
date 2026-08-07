@@ -58,7 +58,6 @@
   <img id="preview" alt="preview">
   <button id="uploadBtn">Upload to Geotab</button>
   <div id="status"></div>
-  <div id="debugState" style="font-size:10px;color:#999;margin-top:24px;word-break:break-all;padding:0 10px;"></div>
 
   <script>
     // ---- Fixed solution ID for this add-in (permanent — generate once, reuse forever) ----
@@ -69,6 +68,7 @@
     var geotabState = null;
     var sessionInfo = null; // { database, sessionId, userName, server }
     var selectedFile = null;
+    var driverId = null; // resolved from state.iam username -> User record
 
     // NOTE: Nothing in this top-level <script> block touches the DOM.
     // Drive evaluates this script before the add-in's body markup is attached,
@@ -113,6 +113,23 @@
       });
     }
 
+    function resolveDriverId(state) {
+      if (!state || !state.iam) return;
+      var usernames = Object.keys(state.iam);
+      if (!usernames.length) return;
+      var username = usernames[0];
+      geotabApi.call('Get', {
+        typeName: 'User',
+        search: { name: username }
+      }, function (users) {
+        if (users && users[0]) {
+          driverId = users[0].id;
+        }
+      }, function (err) {
+        // Non-fatal — photo still uploads, just without a driver link
+      });
+    }
+
     function fetchSession(onReady) {
       geotabApi.getSession(function (session) {
         sessionInfo = {
@@ -137,11 +154,11 @@
         fromDate: new Date().toISOString(),
         toDate: new Date().toISOString()
       };
-      if (geotabState && geotabState.deviceId) {
-        entity.device = { id: geotabState.deviceId };
+      if (geotabState && geotabState.device && geotabState.device.id) {
+        entity.device = { id: geotabState.device.id };
       }
-      if (geotabState && geotabState.driverId) {
-        entity.driver = { id: geotabState.driverId };
+      if (driverId) {
+        entity.driver = { id: driverId };
       }
 
       geotabApi.call('Add', {
@@ -205,25 +222,18 @@
           geotabApi = api;
           geotabState = state;
 
-          var debugEl = document.getElementById('debugState');
-          if (debugEl) {
-            try {
-              debugEl.textContent = 'DEBUG state: ' + JSON.stringify(state);
-            } catch (e) {
-              debugEl.textContent = 'DEBUG state: (could not stringify) ' + String(state);
-            }
-          }
-
           // Complete the install immediately — don't make Drive wait on
-          // network calls (getSession) before it'll let the add-in load.
+          // network calls before it'll let the add-in load.
           callback();
 
           // DOM is guaranteed present now that Drive has called initialize().
           main();
 
-          // Fetch session credentials in the background so they're ready
-          // by the time the driver taps "Upload to Geotab".
+          // Fetch session credentials and resolve the driver's User ID
+          // in the background so they're ready by the time the driver
+          // taps "Upload to Geotab".
           fetchSession();
+          resolveDriverId(state);
         },
         focus: function (api, state) {},
         blur: function () {}
