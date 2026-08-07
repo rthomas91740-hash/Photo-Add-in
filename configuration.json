@@ -1,16 +1,32 @@
 {
-  "name": "Fleet Wolf Photo Capture",
-  "supportEmail": "you@fleetwolf.com",
-  "version": "1.0",
-  "items": [
-    {
-      "url": "https://rthomas91740-hash.github.io/Photo-Add-in/index.html",
-      "path": "DriveAppLink/",
-      "menuName": {
-        "en": "Take Photo"
-      },
-      "icon": "https://rthomas91740-hash.github.io/Photo-Add-in/icon.svg"
-    }
-  ],
-  "files": {}
+    "name": "Fleet Wolf Photo Capture",
+    "supportEmail": "randy@fleetwolf.com",
+    "version": "1.0",
+    "items": [
+        {
+            "url": "https://rthomas91740-hash.github.io/Photo-Add-in/index.html",
+            "path": "DriveAppLink/",
+            "menuName": {
+                "en": "Take Photo"
+            },
+            "icon": "https://rthomas91740-hash.github.io/Photo-Add-in/icon.svg"
+        },
+        {
+            "url": "https://rthomas91740-hash.github.io/Photo-Add-in/index.html",
+            "path": "/",
+            "menuName": {
+                "en": "Take Photo (test)"
+            },
+            "icon": "https://rthomas91740-hash.github.io/Photo-Add-in/icon.svg"
+        },
+        {
+            "url": "https://rthomas91740-hash.github.io/Photo-Add-in/gallery.html",
+            "path": "/",
+            "menuName": {
+                "en": "Photo Gallery"
+            },
+            "icon": "https://rthomas91740-hash.github.io/Photo-Add-in/icon.svg"
+        }
+    ],
+    "files": {}
 }
