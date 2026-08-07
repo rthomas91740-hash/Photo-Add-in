@@ -19,7 +19,7 @@
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
-    #toolbar button, #toolbar input, #toolbar select {
+    #toolbar button, #toolbar input {
       padding: 8px 14px;
       font-size: 14px;
       border-radius: 6px;
@@ -35,52 +35,41 @@
       background: #eee;
       cursor: pointer;
     }
-    #grid {
-      display: grid !important;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
-      gap: 20px !important;
-      width: 100% !important;
-    }
-    .card {
+    table {
+      border-collapse: collapse;
+      width: 100%;
       background: white;
-      border-radius: 8px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-      overflow: hidden !important;
-      max-width: 100% !important;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
     }
-    .card img {
-      width: 100% !important;
-      max-width: 100% !important;
-      height: 200px !important;
-      max-height: 200px !important;
-      object-fit: cover !important;
-      display: block !important;
-      background: #ddd;
-    }
-    .stamp {
+    th, td {
+      text-align: left;
       padding: 10px 12px;
-      font-size: 13px;
-      line-height: 1.5;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
     }
-    .stamp .row { display: flex; justify-content: space-between; }
-    .stamp .label { color: #888; }
+    th { background: #f0f0f0; }
+    .view-link {
+      color: #1a73e8;
+      cursor: pointer;
+      text-decoration: underline;
+      background: none;
+      border: none;
+      font-size: 14px;
+      padding: 0;
+    }
     #status { color: #666; margin-bottom: 16px; }
-    .checkbox-cell {
-      padding: 8px 12px 0 12px;
-      text-align: right;
-    }
 
+    #printArea { display: none; }
     @media print {
-      #toolbar, .checkbox-cell { display: none !important; }
-      body { background: white; padding: 0; }
-      #grid { display: block; }
-      .card {
-        box-shadow: none;
-        border: 1px solid #999;
+      #toolbar, table { display: none !important; }
+      #printArea { display: block !important; }
+      .printCard {
         page-break-inside: avoid;
-        margin-bottom: 16px;
+        margin-bottom: 24px;
+        border-bottom: 1px solid #999;
+        padding-bottom: 16px;
       }
-      .card img { height: 320px; }
+      .printCard .stampRow { font-size: 13px; margin-top: 8px; }
     }
   </style>
 </head>
@@ -90,28 +79,41 @@
   <div id="toolbar">
     <button id="refreshBtn">Refresh</button>
     <input type="date" id="dateFilter">
+    <input type="text" id="jobFilter" placeholder="Filter by Job #">
     <button id="printBtn">🖨️ Print Selected</button>
     <span id="status"></span>
   </div>
 
-  <div id="grid"></div>
-  <div id="debugSession" style="font-size:10px;color:#999;margin-top:24px;word-break:break-all;padding:0 4px;"></div>
+  <table id="photoTable">
+    <thead>
+      <tr>
+        <th></th>
+        <th>Job #</th>
+        <th>Date</th>
+        <th>Vehicle</th>
+        <th>Driver</th>
+        <th>Photo</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+
+  <div id="printArea"></div>
 
   <script>
-    var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj"; // must match the capture add-in's SOLUTION_ID
+    var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
 
     var geotabApi = null;
+    var sessionInfo = null;
     var deviceNameCache = {};
     var driverNameCache = {};
     var currentRecords = [];
-    var sessionInfo = null;
 
     function main() {
       document.getElementById('refreshBtn').addEventListener('click', loadPhotos);
-      document.getElementById('printBtn').addEventListener('click', function () {
-        window.print();
-      });
       document.getElementById('dateFilter').addEventListener('change', loadPhotos);
+      document.getElementById('jobFilter').addEventListener('input', renderFilteredTable);
+      document.getElementById('printBtn').addEventListener('click', printSelected);
       loadPhotos();
     }
 
@@ -119,17 +121,22 @@
       document.getElementById('status').textContent = text;
     }
 
+    // Job # was encoded into the filename at upload time, e.g. "job-4521-1699999999.jpg"
+    function extractJobNumber(name) {
+      if (!name) return '(none)';
+      var match = name.match(/^job-(.+)-\d+\.[a-z]+$/i);
+      return match ? match[1] : '(none)';
+    }
+
     function loadPhotos() {
       setStatus('Loading...');
-      document.getElementById('grid').innerHTML = '';
+      document.getElementById('tableBody').innerHTML = '';
 
       var search = { solutionId: SOLUTION_ID };
       var dateVal = document.getElementById('dateFilter').value;
       if (dateVal) {
-        var start = new Date(dateVal + 'T00:00:00');
-        var end = new Date(dateVal + 'T23:59:59');
-        search.fromDate = start.toISOString();
-        search.toDate = end.toISOString();
+        search.fromDate = new Date(dateVal + 'T00:00:00').toISOString();
+        search.toDate = new Date(dateVal + 'T23:59:59').toISOString();
       }
 
       geotabApi.call('Get', {
@@ -142,13 +149,13 @@
           return;
         }
         setStatus(currentRecords.length + ' photo(s) found.');
-        resolveNamesAndRender(currentRecords);
+        resolveNames(currentRecords);
       }, function (err) {
         setStatus('Error loading photos: ' + err);
       });
     }
 
-    function resolveNamesAndRender(records) {
+    function resolveNames(records) {
       var deviceIds = [];
       var driverIds = [];
       records.forEach(function (r) {
@@ -161,15 +168,11 @@
       });
 
       var calls = [];
-      deviceIds.forEach(function (id) {
-        calls.push(['Get', { typeName: 'Device', search: { id: id } }]);
-      });
-      driverIds.forEach(function (id) {
-        calls.push(['Get', { typeName: 'User', search: { id: id } }]);
-      });
+      deviceIds.forEach(function (id) { calls.push(['Get', { typeName: 'Device', search: { id: id } }]); });
+      driverIds.forEach(function (id) { calls.push(['Get', { typeName: 'User', search: { id: id } }]); });
 
       if (calls.length === 0) {
-        renderGrid(records);
+        renderFilteredTable();
         return;
       }
 
@@ -186,62 +189,68 @@
             driverNameCache[id] = (u.firstName || '') + ' ' + (u.lastName || '');
           }
         });
-        renderGrid(records);
-      }, function (err) {
-        // Still render even if name lookups fail — fall back to raw IDs
-        renderGrid(records);
+        renderFilteredTable();
+      }, function () {
+        renderFilteredTable();
       });
     }
 
-    function renderGrid(records) {
-      var grid = document.getElementById('grid');
-      grid.innerHTML = '';
+    function renderFilteredTable() {
+      var filterText = document.getElementById('jobFilter').value.trim().toLowerCase();
+      var body = document.getElementById('tableBody');
+      body.innerHTML = '';
 
-      records.forEach(function (r) {
-        var card = document.createElement('div');
-        card.className = 'card';
-
-        var checkboxCell = document.createElement('div');
-        checkboxCell.className = 'checkbox-cell';
-        var checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = true;
-        checkbox.dataset.id = r.id;
-        checkboxCell.appendChild(checkbox);
-        card.appendChild(checkboxCell);
-
-        var img = document.createElement('img');
-        img.alt = r.name;
-        img.src = ''; // filled in after DownloadMediaFile resolves
-        card.appendChild(img);
-
-        var stamp = document.createElement('div');
-        stamp.className = 'stamp';
+      currentRecords.forEach(function (r) {
+        var jobNumber = extractJobNumber(r.name);
+        if (filterText && jobNumber.toLowerCase().indexOf(filterText) === -1) return;
 
         var deviceName = (r.device && r.device.id && deviceNameCache[r.device.id]) || 'Unassigned';
         var driverName = (r.driver && r.driver.id && driverNameCache[r.driver.id]) || 'Unassigned';
         var dateStr = r.fromDate ? new Date(r.fromDate).toLocaleString() : 'Unknown date';
 
-        stamp.innerHTML =
-          '<div class="row"><span class="label">Date:</span><span>' + dateStr + '</span></div>' +
-          '<div class="row"><span class="label">Vehicle:</span><span>' + deviceName + '</span></div>' +
-          '<div class="row"><span class="label">Driver:</span><span>' + driverName + '</span></div>';
+        var tr = document.createElement('tr');
 
-        card.appendChild(stamp);
-        grid.appendChild(card);
+        var checkTd = document.createElement('td');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.dataset.id = r.id;
+        checkTd.appendChild(checkbox);
+        tr.appendChild(checkTd);
 
-        checkbox.addEventListener('change', function () {
-          card.style.display = checkbox.checked ? '' : 'none';
+        [jobNumber, dateStr, deviceName, driverName].forEach(function (val) {
+          var td = document.createElement('td');
+          td.textContent = val;
+          tr.appendChild(td);
         });
 
-        // Fetch the actual image binary — DownloadMediaFile returns raw
-        // binary bytes, not JSON, so this bypasses api.call() (which tries
-        // to JSON-parse every response) and fetches it directly instead.
-        downloadImage(r.id, img);
+        var viewTd = document.createElement('td');
+        var viewBtn = document.createElement('button');
+        viewBtn.className = 'view-link';
+        viewBtn.textContent = 'View';
+        viewBtn.addEventListener('click', function () {
+          viewPhoto(r.id);
+        });
+        viewTd.appendChild(viewBtn);
+        tr.appendChild(viewTd);
+
+        body.appendChild(tr);
       });
     }
 
-    function downloadImage(mediaFileId, imgEl) {
+    // Opens a blank tab synchronously (so it isn't blocked as a popup),
+    // then fills it in once the image has actually downloaded.
+    function viewPhoto(mediaFileId) {
+      var newTab = window.open('', '_blank');
+      if (newTab) newTab.document.write('Loading photo...');
+      downloadImageBlob(mediaFileId, function (blob) {
+        var url = URL.createObjectURL(blob);
+        if (newTab) newTab.location.href = url;
+      }, function (err) {
+        if (newTab) newTab.document.write('Failed to load photo: ' + err);
+      });
+    }
+
+    function downloadImageBlob(mediaFileId, onSuccess, onError) {
       function send() {
         var payload = {
           method: 'DownloadMediaFile',
@@ -263,25 +272,12 @@
           .then(function (res) {
             var contentType = res.headers.get('content-type') || '';
             if (contentType.indexOf('json') !== -1) {
-              // An image would never come back as JSON — this means
-              // the server sent an error instead of the photo.
-              return res.text().then(function (text) {
-                throw new Error('Server said: ' + text);
-              });
+              return res.text().then(function (text) { throw new Error(text); });
             }
             return res.blob();
           })
-          .then(function (blob) {
-            imgEl.src = URL.createObjectURL(blob);
-          })
-          .catch(function (err) {
-            imgEl.alt = 'Failed to load image';
-            var wrapper = imgEl.parentNode;
-            var errDiv = document.createElement('div');
-            errDiv.style.cssText = 'color:#c00;font-size:11px;padding:6px 12px;word-break:break-all;';
-            errDiv.textContent = err.message || String(err);
-            wrapper.insertBefore(errDiv, imgEl.nextSibling);
-          });
+          .then(onSuccess)
+          .catch(function (err) { onError(err.message || String(err)); });
       }
 
       if (sessionInfo) {
@@ -291,12 +287,73 @@
       }
     }
 
+    function printSelected() {
+      var checked = Array.prototype.slice.call(
+        document.querySelectorAll('#tableBody input[type=checkbox]:checked')
+      );
+      if (!checked.length) {
+        alert('Check at least one row to print.');
+        return;
+      }
+
+      var printArea = document.getElementById('printArea');
+      printArea.innerHTML = '<p>Loading ' + checked.length + ' photo(s) for print...</p>';
+
+      var remaining = checked.length;
+      var cards = {};
+
+      checked.forEach(function (cb) {
+        var id = cb.dataset.id;
+        var record = currentRecords.filter(function (r) { return r.id === id; })[0];
+        if (!record) { remaining--; return; }
+
+        var jobNumber = extractJobNumber(record.name);
+        var deviceName = (record.device && record.device.id && deviceNameCache[record.device.id]) || 'Unassigned';
+        var driverName = (record.driver && record.driver.id && driverNameCache[record.driver.id]) || 'Unassigned';
+        var dateStr = record.fromDate ? new Date(record.fromDate).toLocaleString() : 'Unknown date';
+
+        downloadImageBlob(id, function (blob) {
+          var card = document.createElement('div');
+          card.className = 'printCard';
+
+          var img = document.createElement('img');
+          img.style.cssText = 'max-width:500px;max-height:400px;display:block;';
+          img.src = URL.createObjectURL(blob);
+
+          var stampRow = document.createElement('div');
+          stampRow.className = 'stampRow';
+          stampRow.textContent = 'Job #: ' + jobNumber + '  |  Date: ' + dateStr + '  |  Vehicle: ' + deviceName + '  |  Driver: ' + driverName;
+
+          card.appendChild(img);
+          card.appendChild(stampRow);
+          cards[id] = card;
+
+          remaining--;
+          if (remaining === 0) finishPrint(checked, cards);
+        }, function (err) {
+          var card = document.createElement('div');
+          card.className = 'printCard';
+          card.textContent = 'Job #: ' + jobNumber + ' — photo failed to load (' + err + ')';
+          cards[id] = card;
+
+          remaining--;
+          if (remaining === 0) finishPrint(checked, cards);
+        });
+      });
+    }
+
+    function finishPrint(checked, cards) {
+      var printArea = document.getElementById('printArea');
+      printArea.innerHTML = '';
+      checked.forEach(function (cb) {
+        var card = cards[cb.dataset.id];
+        if (card) printArea.appendChild(card);
+      });
+      window.print();
+    }
+
     function fetchSession(onReady) {
       geotabApi.getSession(function (session) {
-        var debugEl = document.getElementById('debugSession');
-        if (debugEl) {
-          debugEl.textContent = 'DEBUG session: ' + JSON.stringify(session);
-        }
         sessionInfo = {
           database: session.database,
           sessionId: session.sessionId,
@@ -311,15 +368,7 @@
       return {
         initialize: function (api, state, callback) {
           geotabApi = api;
-
-          // Complete the install immediately — Drive shouldn't wait on
-          // network calls before it'll let the add-in load.
           callback();
-
-          // Wait for ONE confirmed-good session before doing anything else.
-          // Trying to load photos immediately caused several simultaneous
-          // getSession() calls to fire before Drive had finished setting
-          // up the add-in, producing malformed session data.
           fetchSession(function () {
             main();
           });
