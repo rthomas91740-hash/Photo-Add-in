@@ -228,19 +228,46 @@
           card.style.display = checkbox.checked ? '' : 'none';
         });
 
-        // Fetch the actual image binary
-        geotabApi.call('DownloadMediaFile', {
-          mediaFile: { id: r.id }
-        }, function (result) {
-          // result.data is expected to be base64-encoded binary
-          if (result && result.data) {
-            img.src = 'data:image/jpeg;base64,' + result.data;
-          }
-        }, function (err) {
-          img.alt = 'Failed to load image';
-        });
+        // Fetch the actual image binary — DownloadMediaFile returns raw
+        // binary bytes, not JSON, so this bypasses api.call() (which tries
+        // to JSON-parse every response) and fetches it directly instead.
+        downloadImage(r.id, img);
       });
     }
+
+    function downloadImage(mediaFileId, imgEl) {
+      function send() {
+        var payload = {
+          method: 'DownloadMediaFile',
+          params: {
+            mediaFile: { id: mediaFileId },
+            credentials: {
+              database: sessionInfo.database,
+              sessionId: sessionInfo.sessionId,
+              userName: sessionInfo.userName
+            }
+          }
+        };
+
+        fetch('https://' + sessionInfo.server + '/apiv1/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+          .then(function (res) { return res.blob(); })
+          .then(function (blob) {
+            imgEl.src = URL.createObjectURL(blob);
+          })
+          .catch(function () {
+            imgEl.alt = 'Failed to load image';
+          });
+      }
+
+      if (sessionInfo) {
+        send();
+      } else {
+        fetchSession(send);
+      }
 
     geotab.addin.fleetWolfPhotoGallery = function () {
       return {
@@ -248,6 +275,7 @@
           geotabApi = api;
           callback();
           main();
+          fetchSession();
         },
         focus: function (api, state) {
           loadPhotos();
