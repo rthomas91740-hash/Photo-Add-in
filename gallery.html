@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Fleet Wolf Photo Gallery</title>
+  <style>
+    body {
+      font-family: -apple-system, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #fafafa;
+      color: #222;
+    }
+    h2 { margin-top: 0; }
+    #toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    #toolbar button, #toolbar input, #toolbar select {
+      padding: 8px 14px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    #printBtn {
+      background: #1a73e8;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    #refreshBtn {
+      background: #eee;
+      cursor: pointer;
+    }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+      overflow: hidden;
+    }
+    .card img {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      display: block;
+      background: #ddd;
+    }
+    .stamp {
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .stamp .row { display: flex; justify-content: space-between; }
+    .stamp .label { color: #888; }
+    #status { color: #666; margin-bottom: 16px; }
+    .checkbox-cell {
+      padding: 8px 12px 0 12px;
+      text-align: right;
+    }
+
+    @media print {
+      #toolbar, .checkbox-cell { display: none !important; }
+      body { background: white; padding: 0; }
+      #grid { display: block; }
+      .card {
+        box-shadow: none;
+        border: 1px solid #999;
+        page-break-inside: avoid;
+        margin-bottom: 16px;
+      }
+      .card img { height: 320px; }
+    }
+  </style>
+</head>
+<body>
+
+  <h2>Fleet Wolf Photo Gallery</h2>
+  <div id="toolbar">
+    <button id="refreshBtn">Refresh</button>
+    <input type="date" id="dateFilter">
+    <button id="printBtn">🖨️ Print Selected</button>
+    <span id="status"></span>
+  </div>
+
+  <div id="grid"></div>
+
+  <script>
+    var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj"; // must match the capture add-in's SOLUTION_ID
+
+    var geotabApi = null;
+    var deviceNameCache = {};
+    var driverNameCache = {};
+    var currentRecords = [];
+
+    function main() {
+      document.getElementById('refreshBtn').addEventListener('click', loadPhotos);
+      document.getElementById('printBtn').addEventListener('click', function () {
+        window.print();
+      });
+      document.getElementById('dateFilter').addEventListener('change', loadPhotos);
+      loadPhotos();
+    }
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function loadPhotos() {
+      setStatus('Loading...');
+      document.getElementById('grid').innerHTML = '';
+
+      var search = { solutionId: SOLUTION_ID };
+      var dateVal = document.getElementById('dateFilter').value;
+      if (dateVal) {
+        var start = new Date(dateVal + 'T00:00:00');
+        var end = new Date(dateVal + 'T23:59:59');
+        search.fromDate = start.toISOString();
+        search.toDate = end.toISOString();
+      }
+
+      geotabApi.call('Get', {
+        typeName: 'MediaFile',
+        search: search
+      }, function (records) {
+        currentRecords = records || [];
+        if (!currentRecords.length) {
+          setStatus('No photos found.');
+          return;
+        }
+        setStatus(currentRecords.length + ' photo(s) found.');
+        resolveNamesAndRender(currentRecords);
+      }, function (err) {
+        setStatus('Error loading photos: ' + err);
+      });
+    }
+
+    function resolveNamesAndRender(records) {
+      var deviceIds = [];
+      var driverIds = [];
+      records.forEach(function (r) {
+        if (r.device && r.device.id && r.device.id !== 'NoDeviceId' && !deviceNameCache[r.device.id]) {
+          deviceIds.push(r.device.id);
+        }
+        if (r.driver && r.driver.id && r.driver.id !== 'UnknownDriverId' && !driverNameCache[r.driver.id]) {
+          driverIds.push(r.driver.id);
+        }
+      });
+
+      var calls = [];
+      deviceIds.forEach(function (id) {
+        calls.push(['Get', { typeName: 'Device', search: { id: id } }]);
+      });
+      driverIds.forEach(function (id) {
+        calls.push(['Get', { typeName: 'User', search: { id: id } }]);
+      });
+
+      if (calls.length === 0) {
+        renderGrid(records);
+        return;
+      }
+
+      geotabApi.multiCall(calls, function (results) {
+        var di = 0;
+        deviceIds.forEach(function (id) {
+          var res = results[di++];
+          if (res && res[0]) deviceNameCache[id] = res[0].name;
+        });
+        driverIds.forEach(function (id) {
+          var res = results[di++];
+          if (res && res[0]) {
+            var u = res[0];
+            driverNameCache[id] = (u.firstName || '') + ' ' + (u.lastName || '');
+          }
+        });
+        renderGrid(records);
+      }, function (err) {
+        // Still render even if name lookups fail — fall back to raw IDs
+        renderGrid(records);
+      });
+    }
+
+    function renderGrid(records) {
+      var grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      records.forEach(function (r) {
+        var card = document.createElement('div');
+        card.className = 'card';
+
+        var checkboxCell = document.createElement('div');
+        checkboxCell.className = 'checkbox-cell';
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.dataset.id = r.id;
+        checkboxCell.appendChild(checkbox);
+        card.appendChild(checkboxCell);
+
+        var img = document.createElement('img');
+        img.alt = r.name;
+        img.src = ''; // filled in after DownloadMediaFile resolves
+        card.appendChild(img);
+
+        var stamp = document.createElement('div');
+        stamp.className = 'stamp';
+
+        var deviceName = (r.device && r.device.id && deviceNameCache[r.device.id]) || 'Unassigned';
+        var driverName = (r.driver && r.driver.id && driverNameCache[r.driver.id]) || 'Unassigned';
+        var dateStr = r.fromDate ? new Date(r.fromDate).toLocaleString() : 'Unknown date';
+
+        stamp.innerHTML =
+          '<div class="row"><span class="label">Date:</span><span>' + dateStr + '</span></div>' +
+          '<div class="row"><span class="label">Vehicle:</span><span>' + deviceName + '</span></div>' +
+          '<div class="row"><span class="label">Driver:</span><span>' + driverName + '</span></div>';
+
+        card.appendChild(stamp);
+        grid.appendChild(card);
+
+        checkbox.addEventListener('change', function () {
+          card.style.display = checkbox.checked ? '' : 'none';
+        });
+
+        // Fetch the actual image binary
+        geotabApi.call('DownloadMediaFile', {
+          mediaFile: { id: r.id }
+        }, function (result) {
+          // result.data is expected to be base64-encoded binary
+          if (result && result.data) {
+            img.src = 'data:image/jpeg;base64,' + result.data;
+          }
+        }, function (err) {
+          img.alt = 'Failed to load image';
+        });
+      });
+    }
+
+    geotab.addin.fleetWolfPhotoGallery = function () {
+      return {
+        initialize: function (api, state, callback) {
+          geotabApi = api;
+          callback();
+          main();
+        },
+        focus: function (api, state) {
+          loadPhotos();
+        },
+        blur: function () {}
+      };
+    };
+  </script>
+</body>
+</html>
