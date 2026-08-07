@@ -58,6 +58,7 @@
   <img id="preview" alt="preview">
   <button id="uploadBtn">Upload to Geotab</button>
   <div id="status"></div>
+  <div id="debugState" style="font-size:10px;color:#999;margin-top:24px;word-break:break-all;padding:0 10px;"></div>
 
   <script>
     // ---- Fixed solution ID for this add-in (permanent — generate once, reuse forever) ----
@@ -203,6 +204,15 @@
         initialize: function (api, state, callback) {
           geotabApi = api;
           geotabState = state;
+
+          var debugEl = document.getElementById('debugState');
+          if (debugEl) {
+            try {
+              debugEl.textContent = 'DEBUG state: ' + JSON.stringify(state);
+            } catch (e) {
+              debugEl.textContent = 'DEBUG state: (could not stringify) ' + String(state);
+            }
+          }
 
           // Complete the install immediately — don't make Drive wait on
           // network calls (getSession) before it'll let the add-in load.
