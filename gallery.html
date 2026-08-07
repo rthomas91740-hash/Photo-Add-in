@@ -311,9 +311,18 @@
       return {
         initialize: function (api, state, callback) {
           geotabApi = api;
+
+          // Complete the install immediately — Drive shouldn't wait on
+          // network calls before it'll let the add-in load.
           callback();
-          main();
-          fetchSession();
+
+          // Wait for ONE confirmed-good session before doing anything else.
+          // Trying to load photos immediately caused several simultaneous
+          // getSession() calls to fire before Drive had finished setting
+          // up the add-in, producing malformed session data.
+          fetchSession(function () {
+            main();
+          });
         },
         focus: function (api, state) {
           loadPhotos();
