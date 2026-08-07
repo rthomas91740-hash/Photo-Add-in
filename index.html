@@ -12,7 +12,17 @@
       background: #f4f4f4;
       text-align: center;
     }
-    h2 { color: #222; }
+    h2 { color: #222; margin-bottom: 16px; }
+    #jobNumber {
+      width: 100%;
+      max-width: 320px;
+      box-sizing: border-box;
+      padding: 14px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      margin-bottom: 14px;
+    }
     #cameraBtn {
       background: #1a73e8;
       color: white;
@@ -22,6 +32,9 @@
       border-radius: 8px;
       width: 100%;
       max-width: 320px;
+    }
+    #cameraBtn:disabled {
+      background: #aac3ec;
     }
     #preview {
       margin-top: 20px;
@@ -52,6 +65,10 @@
 
   <h2>Take a Photo</h2>
 
+  <input type="text" id="jobNumber" placeholder="Job # / Work Order #">
+
+  <!-- Fallback file input, used only when Drive's native camera API isn't available
+       (e.g. testing this page in a regular desktop browser). -->
   <input type="file" accept="image/*" capture="environment" id="fileInput" style="display:none">
   <button id="cameraBtn">📷 Take Photo</button>
 
@@ -60,24 +77,17 @@
   <div id="status"></div>
 
   <script>
-    // ---- Fixed solution ID for this add-in (permanent — generate once, reuse forever) ----
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
 
-    // ---- Populated once Drive calls initialize() ----
     var geotabApi = null;
     var geotabState = null;
-    var sessionInfo = null; // { database, sessionId, userName, server }
-    var selectedFile = null;
-    var driverId = null; // resolved from state.iam username -> User record
-
-    // NOTE: Nothing in this top-level <script> block touches the DOM.
-    // Drive evaluates this script before the add-in's body markup is attached,
-    // so any getElementById() call up here returns null and throws —
-    // which is exactly what caused the "cannot be installed" error.
-    // All DOM lookups and event listeners are wired up inside main(),
-    // which only runs once initialize() fires (markup is guaranteed present by then).
+    var sessionInfo = null;
+    var selectedBlob = null;
+    var deviceId = null;
+    var driverId = null;
 
     function main() {
+      var jobNumberEl = document.getElementById('jobNumber');
       var fileInput = document.getElementById('fileInput');
       var cameraBtn = document.getElementById('cameraBtn');
       var preview = document.getElementById('preview');
@@ -85,13 +95,37 @@
       var statusEl = document.getElementById('status');
 
       cameraBtn.addEventListener('click', function () {
-        fileInput.click();
+        if (!jobNumberEl.value.trim()) {
+          statusEl.textContent = 'Enter a Job # before taking a photo.';
+          jobNumberEl.focus();
+          return;
+        }
+
+        if (geotabApi && geotabApi.mobile && geotabApi.mobile.exists && geotabApi.mobile.exists()) {
+          // Native Drive camera — opens Drive's own capture modal
+          // (New Picture / Upload options) and hands us the image back
+          // as base64 data. More reliable inside Drive's webview than
+          // a plain HTML file input.
+          statusEl.textContent = 'Opening camera...';
+          geotabApi.mobile.camera.takePicture().then(function (base64Data) {
+            selectedBlob = base64ToBlob(base64Data);
+            showPreview(selectedBlob);
+          }).catch(function (err) {
+            statusEl.textContent = 'Camera error: ' + err;
+          });
+        } else {
+          // Fallback for testing in a regular browser (no native Drive camera available)
+          fileInput.click();
+        }
       });
 
       fileInput.addEventListener('change', function (e) {
         if (!e.target.files || !e.target.files[0]) return;
-        selectedFile = e.target.files[0];
+        selectedBlob = e.target.files[0];
+        showPreview(selectedBlob);
+      });
 
+      function showPreview(blob) {
         var reader = new FileReader();
         reader.onload = function (evt) {
           preview.src = evt.target.result;
@@ -99,35 +133,68 @@
           uploadBtn.style.display = 'inline-block';
           statusEl.textContent = 'Ready to upload.';
         };
-        reader.readAsDataURL(selectedFile);
-      });
+        reader.readAsDataURL(blob);
+      }
 
       uploadBtn.addEventListener('click', function () {
-        if (!selectedFile) return;
+        if (!selectedBlob) return;
+        if (!jobNumberEl.value.trim()) {
+          statusEl.textContent = 'Enter a Job # before uploading.';
+          jobNumberEl.focus();
+          return;
+        }
         if (!geotabApi) {
           statusEl.textContent = 'Not connected to Geotab yet — open this from inside Drive.';
           return;
         }
         statusEl.textContent = 'Creating record...';
-        uploadPhoto(selectedFile, statusEl, uploadBtn);
+        uploadPhoto(selectedBlob, jobNumberEl.value.trim(), statusEl, uploadBtn);
       });
     }
 
-    function resolveDriverId(state) {
-      if (!state || !state.iam) return;
-      var usernames = Object.keys(state.iam);
-      if (!usernames.length) return;
-      var username = usernames[0];
-      geotabApi.call('Get', {
-        typeName: 'User',
-        search: { name: username }
-      }, function (users) {
-        if (users && users[0]) {
-          driverId = users[0].id;
+    function base64ToBlob(base64Data) {
+      // Handle both a raw base64 string and a data: URL, just in case.
+      var raw = base64Data.indexOf(',') !== -1 ? base64Data.split(',')[1] : base64Data;
+      var binary = atob(raw);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return new Blob([bytes], { type: 'image/jpeg' });
+    }
+
+    function resolveVehicleAndDriver() {
+      // Prefer Drive's native mobile API — official, documented methods
+      // for the current vehicle/driver, instead of digging through the
+      // raw state object.
+      if (geotabApi && geotabApi.mobile && geotabApi.mobile.exists && geotabApi.mobile.exists()) {
+        if (geotabApi.mobile.vehicle && geotabApi.mobile.vehicle.get) {
+          geotabApi.mobile.vehicle.get().then(function (vehicle) {
+            if (vehicle && vehicle.id) deviceId = vehicle.id;
+          }).catch(function () {});
         }
-      }, function (err) {
-        // Non-fatal — photo still uploads, just without a driver link
-      });
+        if (geotabApi.mobile.user && geotabApi.mobile.user.get) {
+          geotabApi.mobile.user.get().then(function (user) {
+            if (user && user.id) driverId = user.id;
+          }).catch(function () {});
+        }
+      } else if (geotabState) {
+        // Fallback for browser testing outside the native Drive app
+        if (geotabState.device && geotabState.device.id) {
+          deviceId = geotabState.device.id;
+        }
+        if (geotabState.iam) {
+          var usernames = Object.keys(geotabState.iam);
+          if (usernames.length && geotabApi) {
+            geotabApi.call('Get', {
+              typeName: 'User',
+              search: { name: usernames[0] }
+            }, function (users) {
+              if (users && users[0]) driverId = users[0].id;
+            }, function () {});
+          }
+        }
+      }
     }
 
     function fetchSession(onReady) {
@@ -142,37 +209,34 @@
       });
     }
 
-    function uploadPhoto(file, statusEl, uploadBtn) {
-      var fileName = 'photo-' + Date.now() + '.jpg';
+    function uploadPhoto(blob, jobNumber, statusEl, uploadBtn) {
+      // Job # is encoded into the filename so it's always retrievable
+      // from a plain MediaFile Get call, without depending on a specific
+      // free-text field whose exact name we haven't independently verified.
+      var safeJob = jobNumber.replace(/[^a-z0-9\-_]/gi, '_');
+      var fileName = 'job-' + safeJob + '-' + Date.now() + '.jpg';
 
-      // Link to the active vehicle/driver from Drive's state when available,
-      // so the photo shows up against the right device/driver in MyGeotab
-      // instead of floating with NoDeviceId / UnknownDriverId.
       var entity = {
         name: fileName,
         solutionId: SOLUTION_ID,
         fromDate: new Date().toISOString(),
         toDate: new Date().toISOString()
       };
-      if (geotabState && geotabState.device && geotabState.device.id) {
-        entity.device = { id: geotabState.device.id };
-      }
-      if (driverId) {
-        entity.driver = { id: driverId };
-      }
+      if (deviceId) entity.device = { id: deviceId };
+      if (driverId) entity.driver = { id: driverId };
 
       geotabApi.call('Add', {
         typeName: 'MediaFile',
         entity: entity
       }, function (mediaFileId) {
         statusEl.textContent = 'Uploading image...';
-        doMultipartUpload(mediaFileId, fileName, file, statusEl, uploadBtn);
+        doMultipartUpload(mediaFileId, fileName, blob, statusEl, uploadBtn);
       }, function (err) {
         statusEl.textContent = 'Error creating record: ' + err;
       });
     }
 
-    function doMultipartUpload(mediaFileId, fileName, file, statusEl, uploadBtn) {
+    function doMultipartUpload(mediaFileId, fileName, blob, statusEl, uploadBtn) {
       function send() {
         var payload = {
           method: 'UploadMediaFile',
@@ -188,7 +252,7 @@
 
         var formData = new FormData();
         formData.append('JSON-RPC', JSON.stringify(payload));
-        formData.append('file', file, fileName);
+        formData.append('file', blob, fileName);
 
         fetch('https://' + sessionInfo.server + '/apiv1/', {
           method: 'POST',
@@ -215,25 +279,16 @@
       }
     }
 
-    // ---- Geotab Add-In lifecycle ----
     geotab.addin.fleetWolfPhotoCapture = function () {
       return {
         initialize: function (api, state, callback) {
           geotabApi = api;
           geotabState = state;
 
-          // Complete the install immediately — don't make Drive wait on
-          // network calls before it'll let the add-in load.
           callback();
-
-          // DOM is guaranteed present now that Drive has called initialize().
           main();
-
-          // Fetch session credentials and resolve the driver's User ID
-          // in the background so they're ready by the time the driver
-          // taps "Upload to Geotab".
           fetchSession();
-          resolveDriverId(state);
+          resolveVehicleAndDriver();
         },
         focus: function (api, state) {},
         blur: function () {}
