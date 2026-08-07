@@ -95,6 +95,7 @@
   </div>
 
   <div id="grid"></div>
+  <div id="debugSession" style="font-size:10px;color:#999;margin-top:24px;word-break:break-all;padding:0 4px;"></div>
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj"; // must match the capture add-in's SOLUTION_ID
@@ -292,6 +293,10 @@
 
     function fetchSession(onReady) {
       geotabApi.getSession(function (session) {
+        var debugEl = document.getElementById('debugSession');
+        if (debugEl) {
+          debugEl.textContent = 'DEBUG session: ' + JSON.stringify(session);
+        }
         sessionInfo = {
           database: session.database,
           sessionId: session.sessionId,
