@@ -52,7 +52,6 @@
 
   <h2>Take a Photo</h2>
 
-  <!-- This input opens the phone's real camera when tapped -->
   <input type="file" accept="image/*" capture="environment" id="fileInput" style="display:none">
   <button id="cameraBtn">📷 Take Photo</button>
 
@@ -61,112 +60,160 @@
   <div id="status"></div>
 
   <script>
-    // ---- These get filled in automatically by Geotab Drive when it loads this add-in ----
-    var geotabApi = null;   // the api object Drive gives us
+    // ---- Fixed solution ID for this add-in (permanent — generate once, reuse forever) ----
+    var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
+
+    // ---- Populated once Drive calls initialize() ----
+    var geotabApi = null;
     var geotabState = null;
-
-    // ---- A fixed ID that identifies THIS add-in's data in Geotab. ----
-    // Generate your own at: https://geotab.github.io/sdk/software/api/runner.html#sample:generate-addin-guid
-    // Replace the placeholder below with the one you generate.
-    var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj"; // <-- REPLACE THIS
-
+    var sessionInfo = null; // { database, sessionId, userName, server }
     var selectedFile = null;
 
-    var fileInput = document.getElementById('fileInput');
-    var cameraBtn = document.getElementById('cameraBtn');
-    var preview = document.getElementById('preview');
-    var uploadBtn = document.getElementById('uploadBtn');
-    var statusEl = document.getElementById('status');
+    // NOTE: Nothing in this top-level <script> block touches the DOM.
+    // Drive evaluates this script before the add-in's body markup is attached,
+    // so any getElementById() call up here returns null and throws —
+    // which is exactly what caused the "cannot be installed" error.
+    // All DOM lookups and event listeners are wired up inside main(),
+    // which only runs once initialize() fires (markup is guaranteed present by then).
 
-    cameraBtn.addEventListener('click', function () {
-      fileInput.click();
-    });
+    function main() {
+      var fileInput = document.getElementById('fileInput');
+      var cameraBtn = document.getElementById('cameraBtn');
+      var preview = document.getElementById('preview');
+      var uploadBtn = document.getElementById('uploadBtn');
+      var statusEl = document.getElementById('status');
 
-    fileInput.addEventListener('change', function (e) {
-      if (!e.target.files || !e.target.files[0]) return;
-      selectedFile = e.target.files[0];
+      cameraBtn.addEventListener('click', function () {
+        fileInput.click();
+      });
 
-      var reader = new FileReader();
-      reader.onload = function (evt) {
-        preview.src = evt.target.result;
-        preview.style.display = 'block';
-        uploadBtn.style.display = 'inline-block';
-        statusEl.textContent = 'Ready to upload.';
-      };
-      reader.readAsDataURL(selectedFile);
-    });
+      fileInput.addEventListener('change', function (e) {
+        if (!e.target.files || !e.target.files[0]) return;
+        selectedFile = e.target.files[0];
 
-    uploadBtn.addEventListener('click', function () {
-      if (!selectedFile) return;
-      if (!geotabApi) {
-        statusEl.textContent = 'Not connected to Geotab yet — open this from inside Drive.';
-        return;
-      }
-      uploadPhoto(selectedFile);
-    });
+        var reader = new FileReader();
+        reader.onload = function (evt) {
+          preview.src = evt.target.result;
+          preview.style.display = 'block';
+          uploadBtn.style.display = 'inline-block';
+          statusEl.textContent = 'Ready to upload.';
+        };
+        reader.readAsDataURL(selectedFile);
+      });
 
-    function uploadPhoto(file) {
-      statusEl.textContent = 'Creating record...';
+      uploadBtn.addEventListener('click', function () {
+        if (!selectedFile) return;
+        if (!geotabApi) {
+          statusEl.textContent = 'Not connected to Geotab yet — open this from inside Drive.';
+          return;
+        }
+        statusEl.textContent = 'Creating record...';
+        uploadPhoto(selectedFile, statusEl, uploadBtn);
+      });
+    }
 
+    function fetchSession(onReady) {
+      geotabApi.getSession(function (session) {
+        sessionInfo = {
+          database: session.database,
+          sessionId: session.sessionId,
+          userName: session.userName,
+          server: session.server || session.path || window.location.hostname
+        };
+        if (onReady) onReady();
+      });
+    }
+
+    function uploadPhoto(file, statusEl, uploadBtn) {
       var fileName = 'photo-' + Date.now() + '.jpg';
 
-      var mediaFileEntity = {
+      // Link to the active vehicle/driver from Drive's state when available,
+      // so the photo shows up against the right device/driver in MyGeotab
+      // instead of floating with NoDeviceId / UnknownDriverId.
+      var entity = {
         name: fileName,
         solutionId: SOLUTION_ID,
         fromDate: new Date().toISOString(),
         toDate: new Date().toISOString()
-        // You can also attach: device: { id: geotabState.deviceId }
-        // or driver: { id: geotabState.userId } if those are available in state
       };
+      if (geotabState && geotabState.deviceId) {
+        entity.device = { id: geotabState.deviceId };
+      }
+      if (geotabState && geotabState.driverId) {
+        entity.driver = { id: geotabState.driverId };
+      }
 
-      // STEP 1: create the MediaFile record (metadata only, no image yet)
       geotabApi.call('Add', {
         typeName: 'MediaFile',
-        entity: mediaFileEntity
+        entity: entity
       }, function (mediaFileId) {
         statusEl.textContent = 'Uploading image...';
-        uploadBinary(mediaFileId, fileName, file);
+        doMultipartUpload(mediaFileId, fileName, file, statusEl, uploadBtn);
       }, function (err) {
         statusEl.textContent = 'Error creating record: ' + err;
       });
     }
 
-    function uploadBinary(mediaFileId, fileName, file) {
-      // STEP 2: upload the actual image bytes for that record.
-      // UploadMediaFile expects multipart/form-data, so we build the request by hand.
-      var reader = new FileReader();
-      reader.onload = function () {
-        var arrayBuffer = reader.result;
+    function doMultipartUpload(mediaFileId, fileName, file, statusEl, uploadBtn) {
+      function send() {
+        var payload = {
+          method: 'UploadMediaFile',
+          params: {
+            mediaFile: { id: mediaFileId, name: fileName },
+            credentials: {
+              database: sessionInfo.database,
+              sessionId: sessionInfo.sessionId,
+              userName: sessionInfo.userName
+            }
+          }
+        };
 
-        geotabApi.call('UploadMediaFile', {
-          mediaFile: { id: mediaFileId, name: fileName },
-          fileData: arrayBufferToBase64(arrayBuffer)
-        }, function () {
-          statusEl.textContent = '✅ Photo uploaded! It will appear in MyGeotab shortly.';
-          uploadBtn.style.display = 'none';
-        }, function (err) {
-          statusEl.textContent = 'Upload failed: ' + err;
-        });
-      };
-      reader.readAsArrayBuffer(file);
-    }
+        var formData = new FormData();
+        formData.append('JSON-RPC', JSON.stringify(payload));
+        formData.append('file', file, fileName);
 
-    function arrayBufferToBase64(buffer) {
-      var binary = '';
-      var bytes = new Uint8Array(buffer);
-      for (var i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
+        fetch('https://' + sessionInfo.server + '/apiv1/', {
+          method: 'POST',
+          body: formData
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (json) {
+            if (json && json.error) {
+              statusEl.textContent = 'Upload failed: ' + json.error.message;
+              return;
+            }
+            statusEl.textContent = '✅ Photo uploaded! It will appear in MyGeotab shortly.';
+            uploadBtn.style.display = 'none';
+          })
+          .catch(function (err) {
+            statusEl.textContent = 'Upload failed: ' + err;
+          });
       }
-      return window.btoa(binary);
+
+      if (sessionInfo) {
+        send();
+      } else {
+        fetchSession(send);
+      }
     }
 
-    // ---- Geotab Add-In lifecycle (required by every Geotab/Drive add-in) ----
+    // ---- Geotab Add-In lifecycle ----
     geotab.addin.fleetWolfPhotoCapture = function () {
       return {
         initialize: function (api, state, callback) {
           geotabApi = api;
           geotabState = state;
+
+          // Complete the install immediately — don't make Drive wait on
+          // network calls (getSession) before it'll let the add-in load.
           callback();
+
+          // DOM is guaranteed present now that Drive has called initialize().
+          main();
+
+          // Fetch session credentials in the background so they're ready
+          // by the time the driver taps "Upload to Geotab".
+          fetchSession();
         },
         focus: function (api, state) {},
         blur: function () {}
