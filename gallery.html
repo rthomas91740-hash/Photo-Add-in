@@ -95,6 +95,10 @@
     <input type="date" id="dateFilter" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
     <input type="text" id="jobFilter" placeholder="Filter by Job #" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
     <button id="printBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:none;background:#1a73e8;color:white;cursor:pointer;">🖨️ Print Selected</button>
+    <button id="archiveBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">🗄️ Archive Selected</button>
+    <label style="font-size:14px;display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="showArchivedToggle"> Show archived
+    </label>
     <span id="status" style="color:#666;"></span>
   </div>
 
@@ -128,6 +132,12 @@
       document.getElementById('dateFilter').addEventListener('change', loadPhotos);
       document.getElementById('jobFilter').addEventListener('input', renderFilteredTable);
       document.getElementById('printBtn').addEventListener('click', printSelected);
+      document.getElementById('archiveBtn').addEventListener('click', archiveSelected);
+      document.getElementById('showArchivedToggle').addEventListener('change', function () {
+        var showArchived = this.checked;
+        document.getElementById('archiveBtn').textContent = showArchived ? '↩️ Unarchive Selected' : '🗄️ Archive Selected';
+        renderFilteredTable();
+      });
       loadPhotos();
     }
 
@@ -136,10 +146,16 @@
     }
 
     // Job # was encoded into the filename at upload time, e.g. "job-4521-1699999999.jpg"
+    // Archived items get "-ARCHIVED" tagged onto the filename before the
+    // extension — nothing is ever deleted, just hidden from the default view.
     function extractJobNumber(name) {
       if (!name) return '(none)';
-      var match = name.match(/^job-(.+)-\d+\.[a-z]+$/i);
+      var match = name.match(/^job-(.+)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
       return match ? match[1] : '(none)';
+    }
+
+    function isArchived(name) {
+      return !!(name && /-ARCHIVED\.[a-z]+$/i.test(name));
     }
 
     function loadPhotos() {
@@ -211,10 +227,14 @@
 
     function renderFilteredTable() {
       var filterText = document.getElementById('jobFilter').value.trim().toLowerCase();
+      var showArchived = document.getElementById('showArchivedToggle').checked;
       var body = document.getElementById('tableBody');
       body.innerHTML = '';
 
       currentRecords.forEach(function (r) {
+        var archived = isArchived(r.name);
+        if (archived !== showArchived) return;
+
         var jobNumber = extractJobNumber(r.name);
         if (filterText && jobNumber.toLowerCase().indexOf(filterText) === -1) return;
 
@@ -306,6 +326,41 @@
       } else {
         fetchSession(send);
       }
+    }
+
+    function archiveSelected() {
+      var checked = Array.prototype.slice.call(
+        document.querySelectorAll('#tableBody input[type=checkbox]:checked')
+      );
+      if (!checked.length) {
+        alert('Check at least one row first.');
+        return;
+      }
+
+      var showArchived = document.getElementById('showArchivedToggle').checked;
+      var actionLabel = showArchived ? 'Unarchiving' : 'Archiving';
+      setStatus(actionLabel + ' ' + checked.length + ' photo(s)...');
+
+      var calls = checked.map(function (cb) {
+        var record = currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
+        if (!record) return null;
+
+        var newName;
+        if (showArchived) {
+          newName = record.name.replace(/-ARCHIVED(\.[a-z]+)$/i, '$1');
+        } else {
+          newName = record.name.replace(/(\.[a-z]+)$/i, '-ARCHIVED$1');
+        }
+
+        var updatedEntity = Object.assign({}, record, { name: newName });
+        return ['Set', { typeName: 'MediaFile', entity: updatedEntity }];
+      }).filter(Boolean);
+
+      geotabApi.multiCall(calls, function () {
+        loadPhotos();
+      }, function (err) {
+        setStatus('Error updating photos: ' + err);
+      });
     }
 
     function printSelected() {
