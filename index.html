@@ -178,9 +178,15 @@
             if (user && user.id) driverId = user.id;
           }).catch(function () {});
         }
-      } else if (geotabState) {
-        // Fallback for browser testing outside the native Drive app
-        if (geotabState.device && geotabState.device.id) {
+      }
+
+      // Also try the username-lookup fallback in parallel (not just when
+      // the native mobile API is unavailable) — if the native user.get()
+      // call fails silently or returns an unexpected shape, this still
+      // gets us a driver ID. Guarded so it won't stomp on a value the
+      // native call already set.
+      if (geotabState) {
+        if (!deviceId && geotabState.device && geotabState.device.id) {
           deviceId = geotabState.device.id;
         }
         if (geotabState.iam) {
@@ -190,7 +196,7 @@
               typeName: 'User',
               search: { name: usernames[0] }
             }, function (users) {
-              if (users && users[0]) driverId = users[0].id;
+              if (!driverId && users && users[0]) driverId = users[0].id;
             }, function () {});
           }
         }
