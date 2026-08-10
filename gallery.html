@@ -87,32 +87,32 @@
     }
   </style>
 </head>
-<body>
+<body style="font-family:-apple-system,Arial,sans-serif;margin:0;padding:20px;background:#fafafa;color:#222;">
 
-  <h2>Fleet Wolf Photo Gallery</h2>
-  <div id="toolbar">
-    <button id="refreshBtn">Refresh</button>
-    <input type="date" id="dateFilter">
-    <input type="text" id="jobFilter" placeholder="Filter by Job #">
-    <button id="printBtn">🖨️ Print Selected</button>
-    <span id="status"></span>
+  <h2 style="margin-top:0;">Fleet Wolf Photo Gallery</h2>
+  <div id="toolbar" style="display:flex;gap:12px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
+    <button id="refreshBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">Refresh</button>
+    <input type="date" id="dateFilter" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
+    <input type="text" id="jobFilter" placeholder="Filter by Job #" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
+    <button id="printBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:none;background:#1a73e8;color:white;cursor:pointer;">🖨️ Print Selected</button>
+    <span id="status" style="color:#666;"></span>
   </div>
 
-  <table id="photoTable">
+  <table id="photoTable" style="border-collapse:collapse;width:100%;max-width:900px;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.1);border-radius:8px;">
     <thead>
       <tr>
-        <th></th>
-        <th>Job #</th>
-        <th>Date</th>
-        <th>Vehicle</th>
-        <th>Driver</th>
-        <th>Photo</th>
+        <th style="text-align:center;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;width:36px;"></th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Job #</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Date</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Vehicle</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Driver</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;width:80px;">Photo</th>
       </tr>
     </thead>
     <tbody id="tableBody"></tbody>
   </table>
 
-  <div id="printArea"></div>
+  <div id="printArea" style="display:none;"></div>
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
@@ -223,8 +223,13 @@
         var dateStr = r.fromDate ? new Date(r.fromDate).toLocaleString() : 'Unknown date';
 
         var tr = document.createElement('tr');
+        tr.style.cssText = 'border-bottom:1px solid #eee;';
+        if (body.children.length % 2 === 1) {
+          tr.style.background = '#fafafa';
+        }
 
         var checkTd = document.createElement('td');
+        checkTd.style.cssText = 'padding:14px 18px;text-align:center;width:36px;';
         var checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.dataset.id = r.id;
@@ -233,13 +238,15 @@
 
         [jobNumber, dateStr, deviceName, driverName].forEach(function (val) {
           var td = document.createElement('td');
+          td.style.cssText = 'padding:14px 18px;font-size:14px;';
           td.textContent = val;
           tr.appendChild(td);
         });
 
         var viewTd = document.createElement('td');
+        viewTd.style.cssText = 'padding:14px 18px;width:80px;';
         var viewBtn = document.createElement('button');
-        viewBtn.className = 'view-link';
+        viewBtn.style.cssText = 'color:#1a73e8;cursor:pointer;text-decoration:underline;background:none;border:none;font-size:14px;padding:0;';
         viewBtn.textContent = 'View';
         viewBtn.addEventListener('click', function () {
           viewPhoto(r.id);
@@ -363,7 +370,24 @@
         var card = cards[cb.dataset.id];
         if (card) printArea.appendChild(card);
       });
+
+      // Don't rely on @media print CSS (it may not survive however
+      // MyGeotab embeds this page) — explicitly hide/show elements
+      // around the print call instead.
+      var toolbar = document.getElementById('toolbar');
+      var table = document.getElementById('photoTable');
+      var prevToolbarDisplay = toolbar.style.display;
+      var prevTableDisplay = table.style.display;
+
+      toolbar.style.display = 'none';
+      table.style.display = 'none';
+      printArea.style.display = 'block';
+
       window.print();
+
+      toolbar.style.display = prevToolbarDisplay;
+      table.style.display = prevTableDisplay;
+      printArea.style.display = 'none';
     }
 
     function fetchSession(onReady) {
