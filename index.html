@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fleet Wolf Photo Capture</title>
+  <title>Job Photos</title>
   <style>
     body {
       font-family: -apple-system, Arial, sans-serif;
@@ -63,9 +63,14 @@
 </head>
 <body>
 
-  <h2>Take a Photo</h2>
+  <h2>New Job Photo</h2>
 
   <input type="text" id="jobNumber" placeholder="Job # / Work Order #">
+  <select id="photoType" style="width:100%;max-width:320px;box-sizing:border-box;padding:14px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin-bottom:14px;">
+    <option value="BOL">BOL</option>
+    <option value="Receipt">Receipt</option>
+    <option value="Other">Other</option>
+  </select>
 
   <!-- Fallback file input, used only when Drive's native camera API isn't available
        (e.g. testing this page in a regular desktop browser). -->
@@ -148,7 +153,7 @@
           return;
         }
         statusEl.textContent = 'Creating record...';
-        uploadPhoto(selectedBlob, jobNumberEl.value.trim(), statusEl, uploadBtn);
+        uploadPhoto(selectedBlob, jobNumberEl.value.trim(), document.getElementById('photoType').value, statusEl, uploadBtn);
       });
     }
 
@@ -215,12 +220,11 @@
       });
     }
 
-    function uploadPhoto(blob, jobNumber, statusEl, uploadBtn) {
-      // Job # is encoded into the filename so it's always retrievable
-      // from a plain MediaFile Get call, without depending on a specific
-      // free-text field whose exact name we haven't independently verified.
+    function uploadPhoto(blob, jobNumber, photoType, statusEl, uploadBtn) {
+      // Job # and Type are both encoded into the filename so they're
+      // always retrievable from a plain MediaFile Get call.
       var safeJob = jobNumber.replace(/[^a-z0-9\-_]/gi, '_');
-      var fileName = 'job-' + safeJob + '-' + Date.now() + '.jpg';
+      var fileName = 'job-' + safeJob + '-type-' + photoType + '-' + Date.now() + '.jpg';
 
       var entity = {
         name: fileName,
