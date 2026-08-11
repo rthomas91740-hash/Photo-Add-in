@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Fleet Wolf Photo Gallery</title>
+  <title>Job Records</title>
   <style>
     body {
       font-family: -apple-system, Arial, sans-serif;
@@ -89,11 +89,18 @@
 </head>
 <body style="font-family:-apple-system,Arial,sans-serif;margin:0;padding:20px;background:#fafafa;color:#222;">
 
-  <h2 style="margin-top:0;">Fleet Wolf Photo Gallery</h2>
+  <h2 style="margin-top:0;">Job Records</h2>
   <div id="toolbar" style="display:flex;gap:12px;align-items:center;margin-bottom:24px;flex-wrap:wrap;">
     <button id="refreshBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">Refresh</button>
     <input type="date" id="dateFilter" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
     <input type="text" id="jobFilter" placeholder="Filter by Job #" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
+    <select id="typeFilter" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;">
+      <option value="">All Types</option>
+      <option value="BOL">BOL</option>
+      <option value="Receipt">Receipt</option>
+      <option value="Other">Other</option>
+    </select>
+    <button id="selectVisibleBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">✅ Select Visible</button>
     <button id="printBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:none;background:#1a73e8;color:white;cursor:pointer;">🖨️ Print Selected</button>
     <button id="archiveBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">🗄️ Archive Selected</button>
     <label style="font-size:14px;display:flex;align-items:center;gap:6px;">
@@ -105,8 +112,11 @@
   <table id="photoTable" style="border-collapse:collapse;width:100%;max-width:900px;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.1);border-radius:8px;">
     <thead>
       <tr>
-        <th style="text-align:center;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;width:36px;"></th>
+        <th style="text-align:center;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;width:36px;">
+          <input type="checkbox" id="selectAllCheckbox">
+        </th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Job #</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Type</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Date</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Vehicle</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Driver</th>
@@ -131,6 +141,14 @@
       document.getElementById('refreshBtn').addEventListener('click', loadPhotos);
       document.getElementById('dateFilter').addEventListener('change', loadPhotos);
       document.getElementById('jobFilter').addEventListener('input', renderFilteredTable);
+      document.getElementById('typeFilter').addEventListener('change', renderFilteredTable);
+      document.getElementById('selectAllCheckbox').addEventListener('change', function () {
+        setAllVisibleChecked(this.checked);
+      });
+      document.getElementById('selectVisibleBtn').addEventListener('click', function () {
+        setAllVisibleChecked(true);
+        document.getElementById('selectAllCheckbox').checked = true;
+      });
       document.getElementById('printBtn').addEventListener('click', printSelected);
       document.getElementById('archiveBtn').addEventListener('click', archiveSelected);
       document.getElementById('showArchivedToggle').addEventListener('change', function () {
@@ -141,17 +159,30 @@
       loadPhotos();
     }
 
+    function setAllVisibleChecked(checked) {
+      document.querySelectorAll('#tableBody input[type=checkbox]').forEach(function (cb) {
+        cb.checked = checked;
+      });
+    }
+
     function setStatus(text) {
       document.getElementById('status').textContent = text;
     }
 
-    // Job # was encoded into the filename at upload time, e.g. "job-4521-1699999999.jpg"
-    // Archived items get "-ARCHIVED" tagged onto the filename before the
-    // extension — nothing is ever deleted, just hidden from the default view.
+    // Job # and Type were encoded into the filename at upload time, e.g.
+    // "job-4521-type-BOL-1699999999.jpg". Older photos (before Type existed)
+    // used "job-4521-1699999999.jpg" — still parsed correctly, just with no type.
+    function parseFileName(name) {
+      if (!name) return { job: '(none)', type: '(none)' };
+      var withType = name.match(/^job-(.+)-type-(BOL|Receipt|Other)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
+      if (withType) return { job: withType[1], type: withType[2] };
+      var withoutType = name.match(/^job-(.+)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
+      if (withoutType) return { job: withoutType[1], type: '(none)' };
+      return { job: '(none)', type: '(none)' };
+    }
+
     function extractJobNumber(name) {
-      if (!name) return '(none)';
-      var match = name.match(/^job-(.+)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
-      return match ? match[1] : '(none)';
+      return parseFileName(name).job;
     }
 
     function isArchived(name) {
@@ -227,16 +258,22 @@
 
     function renderFilteredTable() {
       var filterText = document.getElementById('jobFilter').value.trim().toLowerCase();
+      var typeFilter = document.getElementById('typeFilter').value;
       var showArchived = document.getElementById('showArchivedToggle').checked;
       var body = document.getElementById('tableBody');
       body.innerHTML = '';
+      document.getElementById('selectAllCheckbox').checked = false;
 
       currentRecords.forEach(function (r) {
         var archived = isArchived(r.name);
         if (archived !== showArchived) return;
 
-        var jobNumber = extractJobNumber(r.name);
+        var parsed = parseFileName(r.name);
+        var jobNumber = parsed.job;
+        var photoType = parsed.type;
+
         if (filterText && jobNumber.toLowerCase().indexOf(filterText) === -1) return;
+        if (typeFilter && photoType !== typeFilter) return;
 
         var deviceName = (r.device && r.device.id && deviceNameCache[r.device.id]) || 'Unassigned';
         var driverName = (r.driver && r.driver.id && driverNameCache[r.driver.id]) || 'Unassigned';
@@ -256,7 +293,7 @@
         checkTd.appendChild(checkbox);
         tr.appendChild(checkTd);
 
-        [jobNumber, dateStr, deviceName, driverName].forEach(function (val) {
+        [jobNumber, photoType, dateStr, deviceName, driverName].forEach(function (val) {
           var td = document.createElement('td');
           td.style.cssText = 'padding:14px 18px;font-size:14px;';
           td.textContent = val;
@@ -383,22 +420,28 @@
         var record = currentRecords.filter(function (r) { return r.id === id; })[0];
         if (!record) { remaining--; return; }
 
-        var jobNumber = extractJobNumber(record.name);
+        var parsed = parseFileName(record.name);
+        var jobNumber = parsed.job;
+        var photoType = parsed.type;
         var deviceName = (record.device && record.device.id && deviceNameCache[record.device.id]) || 'Unassigned';
         var driverName = (record.driver && record.driver.id && driverNameCache[record.driver.id]) || 'Unassigned';
         var dateStr = record.fromDate ? new Date(record.fromDate).toLocaleString() : 'Unknown date';
 
         downloadImageBlob(id, function (blob) {
           var card = document.createElement('div');
-          card.className = 'printCard';
+          // Force each photo onto its own full page — the CSS rule for
+          // this lives in the stripped <style> block, so it never actually
+          // applied, which is why multiple photos printed shrunk together
+          // instead of one-per-page like a single photo did.
+          card.style.cssText = 'page-break-after:always;page-break-inside:avoid;text-align:center;padding-top:20px;';
 
           var img = document.createElement('img');
-          img.style.cssText = 'max-width:500px;max-height:400px;display:block;';
+          img.style.cssText = 'max-width:90%;max-height:80vh;display:inline-block;';
           img.src = URL.createObjectURL(blob);
 
           var stampRow = document.createElement('div');
-          stampRow.className = 'stampRow';
-          stampRow.textContent = 'Job #: ' + jobNumber + '  |  Date: ' + dateStr + '  |  Vehicle: ' + deviceName + '  |  Driver: ' + driverName;
+          stampRow.style.cssText = 'font-size:14px;margin-top:12px;';
+          stampRow.textContent = 'Job #: ' + jobNumber + '  |  Type: ' + photoType + '  |  Date: ' + dateStr + '  |  Vehicle: ' + deviceName + '  |  Driver: ' + driverName;
 
           card.appendChild(img);
           card.appendChild(stampRow);
@@ -408,7 +451,7 @@
           if (remaining === 0) finishPrint(checked, cards);
         }, function (err) {
           var card = document.createElement('div');
-          card.className = 'printCard';
+          card.style.cssText = 'page-break-after:always;';
           card.textContent = 'Job #: ' + jobNumber + ' — photo failed to load (' + err + ')';
           cards[id] = card;
 
@@ -421,9 +464,13 @@
     function finishPrint(checked, cards) {
       var printArea = document.getElementById('printArea');
       printArea.innerHTML = '';
-      checked.forEach(function (cb) {
+      checked.forEach(function (cb, i) {
         var card = cards[cb.dataset.id];
-        if (card) printArea.appendChild(card);
+        if (!card) return;
+        if (i === checked.length - 1) {
+          card.style.pageBreakAfter = 'auto';
+        }
+        printArea.appendChild(card);
       });
 
       // Don't rely on @media print CSS (it may not survive however
