@@ -410,15 +410,25 @@
       }
 
       var printArea = document.getElementById('printArea');
-      printArea.innerHTML = '<p>Loading ' + checked.length + ' photo(s) for print...</p>';
-
-      var remaining = checked.length;
       var cards = {};
+      var index = 0;
 
-      checked.forEach(function (cb) {
+      function updateProgress() {
+        printArea.innerHTML = '<p>Loading photo ' + (index + 1) + ' of ' + checked.length + ' for print...</p>';
+      }
+
+      function processNext() {
+        if (index >= checked.length) {
+          finishPrint(checked, cards);
+          return;
+        }
+
+        updateProgress();
+
+        var cb = checked[index];
         var id = cb.dataset.id;
         var record = currentRecords.filter(function (r) { return r.id === id; })[0];
-        if (!record) { remaining--; return; }
+        if (!record) { index++; processNext(); return; }
 
         var parsed = parseFileName(record.name);
         var jobNumber = parsed.job;
@@ -427,7 +437,7 @@
         var driverName = (record.driver && record.driver.id && driverNameCache[record.driver.id]) || 'Unassigned';
         var dateStr = record.fromDate ? new Date(record.fromDate).toLocaleString() : 'Unknown date';
 
-        downloadImageBlob(id, function (blob) {
+        function buildCard(blob) {
           var card = document.createElement('div');
           // Force each photo onto its own full page — the CSS rule for
           // this lives in the stripped <style> block, so it never actually
@@ -445,20 +455,35 @@
 
           card.appendChild(img);
           card.appendChild(stampRow);
-          cards[id] = card;
+          return card;
+        }
 
-          remaining--;
-          if (remaining === 0) finishPrint(checked, cards);
-        }, function (err) {
-          var card = document.createElement('div');
-          card.style.cssText = 'page-break-after:always;';
-          card.textContent = 'Job #: ' + jobNumber + ' — photo failed to load (' + err + ')';
-          cards[id] = card;
+        function attempt(retriesLeft) {
+          downloadImageBlob(id, function (blob) {
+            cards[id] = buildCard(blob);
+            index++;
+            processNext();
+          }, function (err) {
+            // Fetching photos one at a time (not all at once) already
+            // avoids the overload that caused occasional dropped
+            // responses — this retry is just a safety net on top of that.
+            if (retriesLeft > 0) {
+              attempt(retriesLeft - 1);
+            } else {
+              var card = document.createElement('div');
+              card.style.cssText = 'page-break-after:always;';
+              card.textContent = 'Job #: ' + jobNumber + ' — photo failed to load after retrying (' + err + ')';
+              cards[id] = card;
+              index++;
+              processNext();
+            }
+          });
+        }
 
-          remaining--;
-          if (remaining === 0) finishPrint(checked, cards);
-        });
-      });
+        attempt(1);
+      }
+
+      processNext();
     }
 
     function finishPrint(checked, cards) {
