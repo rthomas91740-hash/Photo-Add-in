@@ -437,16 +437,33 @@
         var driverName = (record.driver && record.driver.id && driverNameCache[record.driver.id]) || 'Unassigned';
         var dateStr = record.fromDate ? new Date(record.fromDate).toLocaleString() : 'Unknown date';
 
-        function buildCard(blob) {
+        // Builds the print card and waits for the image to actually finish
+        // loading/decoding before calling back — setting img.src only
+        // *starts* loading it asynchronously. Without this wait, whichever
+        // photo happened to still be loading right when window.print() was
+        // called (almost always the last one processed) would print blank,
+        // since earlier photos had extra time to finish while later ones
+        // were still being fetched.
+        function buildCardAndWaitForLoad(blob, onReady) {
           var card = document.createElement('div');
-          // Force each photo onto its own full page — the CSS rule for
-          // this lives in the stripped <style> block, so it never actually
-          // applied, which is why multiple photos printed shrunk together
-          // instead of one-per-page like a single photo did.
           card.style.cssText = 'page-break-after:always;page-break-inside:avoid;text-align:center;padding-top:20px;';
 
           var img = document.createElement('img');
           img.style.cssText = 'max-width:90%;max-height:80vh;display:inline-block;';
+
+          var settled = false;
+          var safetyTimer;
+          function settle() {
+            if (settled) return;
+            settled = true;
+            clearTimeout(safetyTimer);
+            onReady(card);
+          }
+
+          img.onload = settle;
+          img.onerror = settle; // still show the card/stamp even if rendering the image itself fails
+          safetyTimer = setTimeout(settle, 4000); // just in case neither event fires
+
           img.src = URL.createObjectURL(blob);
 
           var stampRow = document.createElement('div');
@@ -455,14 +472,15 @@
 
           card.appendChild(img);
           card.appendChild(stampRow);
-          return card;
         }
 
         function attempt(retriesLeft) {
           downloadImageBlob(id, function (blob) {
-            cards[id] = buildCard(blob);
-            index++;
-            processNext();
+            buildCardAndWaitForLoad(blob, function (card) {
+              cards[id] = card;
+              index++;
+              processNext();
+            });
           }, function (err) {
             // Fetching photos one at a time (not all at once) already
             // avoids the overload that caused occasional dropped
