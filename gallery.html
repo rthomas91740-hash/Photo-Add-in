@@ -130,6 +130,7 @@
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
+    var MAX_NAME_LENGTH = 128; // Geotab's hard cap on entity Name fields
 
     var geotabApi = null;
     var sessionInfo = null;
@@ -187,6 +188,32 @@
 
     function isArchived(name) {
       return !!(name && /-ARCHIVED\.[a-z]+$/i.test(name));
+    }
+
+    // Builds the archived/unarchived version of a name while guaranteeing
+    // the result never exceeds Geotab's 128-character Name cap. Archiving
+    // only ever *adds* "-ARCHIVED" (9 chars) — if the original name is
+    // already close to the limit (common with old long driver-entered job
+    // numbers from before the upload-side length fix), simply appending
+    // the suffix would push it over 128 and the Set call would fail with
+    // the same ArgumentException. So the base name gets trimmed first if
+    // there isn't enough headroom for the suffix.
+    function toggleArchiveName(name, archiving) {
+      var extMatch = name.match(/(\.[a-z]+)$/i);
+      var ext = extMatch ? extMatch[1] : '';
+      var base = ext ? name.slice(0, name.length - ext.length) : name;
+
+      if (archiving) {
+        var suffix = '-ARCHIVED';
+        var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length;
+        if (base.length > maxBaseLength) {
+          base = base.substring(0, maxBaseLength);
+        }
+        return base + suffix + ext;
+      } else {
+        base = base.replace(/-ARCHIVED$/i, '');
+        return base + ext;
+      }
     }
 
     function loadPhotos() {
@@ -375,20 +402,15 @@
       }
 
       var showArchived = document.getElementById('showArchivedToggle').checked;
-      var actionLabel = showArchived ? 'Unarchiving' : 'Archiving';
+      var archiving = !showArchived;
+      var actionLabel = archiving ? 'Archiving' : 'Unarchiving';
       setStatus(actionLabel + ' ' + checked.length + ' photo(s)...');
 
       var calls = checked.map(function (cb) {
         var record = currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
         if (!record) return null;
 
-        var newName;
-        if (showArchived) {
-          newName = record.name.replace(/-ARCHIVED(\.[a-z]+)$/i, '$1');
-        } else {
-          newName = record.name.replace(/(\.[a-z]+)$/i, '-ARCHIVED$1');
-        }
-
+        var newName = toggleArchiveName(record.name, archiving);
         var updatedEntity = Object.assign({}, record, { name: newName });
         return ['Set', { typeName: 'MediaFile', entity: updatedEntity }];
       }).filter(Boolean);
