@@ -65,7 +65,7 @@
 
   <h2>New Job Photo</h2>
 
-  <input type="text" id="jobNumber" placeholder="Job # / Work Order #">
+  <input type="text" id="jobNumber" placeholder="Job # / Work Order #" maxlength="60">
   <select id="photoType" style="width:100%;max-width:320px;box-sizing:border-box;padding:14px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin-bottom:14px;">
     <option value="BOL">BOL</option>
     <option value="Receipt">Receipt</option>
@@ -83,6 +83,7 @@
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
+    var MAX_NAME_LENGTH = 128; // Geotab's hard cap on entity Name fields
 
     var geotabApi = null;
     var geotabState = null;
@@ -224,7 +225,19 @@
       // Job # and Type are both encoded into the filename so they're
       // always retrievable from a plain MediaFile Get call.
       var safeJob = jobNumber.replace(/[^a-z0-9\-_]/gi, '_');
-      var fileName = 'job-' + safeJob + '-type-' + photoType + '-' + Date.now() + '.jpg';
+
+      // Build the fixed (non-job) parts of the filename first, then work out
+      // exactly how much room is left for the job number itself, so the
+      // final name can never exceed Geotab's 128-character cap on Name —
+      // regardless of how long a driver's typed-in job number is.
+      var suffix = '-type-' + photoType + '-' + Date.now() + '.jpg';
+      var prefix = 'job-';
+      var maxSafeJobLength = MAX_NAME_LENGTH - prefix.length - suffix.length;
+      if (safeJob.length > maxSafeJobLength) {
+        safeJob = safeJob.substring(0, maxSafeJobLength);
+      }
+
+      var fileName = prefix + safeJob + suffix;
 
       var entity = {
         name: fileName,
