@@ -191,29 +191,51 @@
     }
 
     // Builds the archived/unarchived version of a name while guaranteeing
-    // the result never exceeds Geotab's 128-character Name cap. Archiving
-    // only ever *adds* "-ARCHIVED" (9 chars) — if the original name is
-    // already close to the limit (common with old long driver-entered job
-    // numbers from before the upload-side length fix), simply appending
-    // the suffix would push it over 128 and the Set call would fail with
-    // the same ArgumentException. So the base name gets trimmed first if
-    // there isn't enough headroom for the suffix.
+    // the result never exceeds Geotab's 128-character Name cap AND never
+    // collides with another record's name. Archiving only ever *adds*
+    // "-ARCHIVED" (9 chars) — for names already near the limit, room has
+    // to be made by trimming. Trimming from the end of the whole string
+    // is unsafe: the timestamp (the part that keeps otherwise-similar
+    // job names unique) lives at the very end, right before the
+    // extension, so blindly cutting there can make two different
+    // records collapse into the same name and fail as a duplicate.
+    // Instead, only the user-entered job-number portion is trimmed,
+    // and the "-type-TYPE-timestamp" (or "-timestamp") tail is always
+    // preserved in full.
     function toggleArchiveName(name, archiving) {
       var extMatch = name.match(/(\.[a-z]+)$/i);
       var ext = extMatch ? extMatch[1] : '';
       var base = ext ? name.slice(0, name.length - ext.length) : name;
+      var cleanBase = base.replace(/-ARCHIVED$/i, '');
 
-      if (archiving) {
-        var suffix = '-ARCHIVED';
-        var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length;
-        if (base.length > maxBaseLength) {
-          base = base.substring(0, maxBaseLength);
-        }
-        return base + suffix + ext;
-      } else {
-        base = base.replace(/-ARCHIVED$/i, '');
-        return base + ext;
+      if (!archiving) {
+        return cleanBase + ext;
       }
+
+      var suffix = '-ARCHIVED';
+      var fullWithSuffix = cleanBase + suffix + ext;
+      if (fullWithSuffix.length <= MAX_NAME_LENGTH) {
+        return fullWithSuffix;
+      }
+
+      var overBy = fullWithSuffix.length - MAX_NAME_LENGTH;
+      var structured = cleanBase.match(/^(job-)(.+?)(-type-(?:BOL|Receipt|Other)-\d+)$/i) ||
+                        cleanBase.match(/^(job-)(.+?)(-\d+)$/i);
+
+      if (structured) {
+        var prefix = structured[1];
+        var jobPart = structured[2];
+        var tail = structured[3];
+        var newJobLength = Math.max(0, jobPart.length - overBy);
+        jobPart = jobPart.substring(0, newJobLength);
+        return prefix + jobPart + tail + suffix + ext;
+      }
+
+      // Couldn't parse the expected job-###-type-###-timestamp structure
+      // (unexpected/legacy name format) — fall back to trimming from the
+      // end. Rare, and better than failing the archive entirely.
+      var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length;
+      return cleanBase.substring(0, maxBaseLength) + suffix + ext;
     }
 
     function loadPhotos() {
