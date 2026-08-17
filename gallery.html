@@ -191,18 +191,20 @@
     }
 
     // Builds the archived/unarchived version of a name while guaranteeing
-    // the result never exceeds Geotab's 128-character Name cap AND never
-    // collides with another record's name. Archiving only ever *adds*
-    // "-ARCHIVED" (9 chars) — for names already near the limit, room has
-    // to be made by trimming. Trimming from the end of the whole string
-    // is unsafe: the timestamp (the part that keeps otherwise-similar
-    // job names unique) lives at the very end, right before the
-    // extension, so blindly cutting there can make two different
-    // records collapse into the same name and fail as a duplicate.
-    // Instead, only the user-entered job-number portion is trimmed,
-    // and the "-type-TYPE-timestamp" (or "-timestamp") tail is always
-    // preserved in full.
-    function toggleArchiveName(name, archiving) {
+    // the result never exceeds Geotab's 128-character Name cap AND can
+    // never collide with another record's name. Archiving only ever
+    // *adds* "-ARCHIVED" (9 chars) — for names already near the limit,
+    // room has to be made by trimming.
+    //
+    // Trimming is made collision-proof by appending a short slice of the
+    // record's own unique ID whenever trimming happens. Trying to instead
+    // parse out and preserve the timestamp portion of the original name
+    // is fragile — any record whose name doesn't match the exact expected
+    // pattern falls back to a blind end-trim, which can strip the one
+    // part that made it unique. The record ID is guaranteed unique by
+    // Geotab itself, so basing the disambiguator on it removes that risk
+    // entirely, regardless of how the original name was structured.
+    function toggleArchiveName(name, id, archiving) {
       var extMatch = name.match(/(\.[a-z]+)$/i);
       var ext = extMatch ? extMatch[1] : '';
       var base = ext ? name.slice(0, name.length - ext.length) : name;
@@ -218,24 +220,12 @@
         return fullWithSuffix;
       }
 
-      var overBy = fullWithSuffix.length - MAX_NAME_LENGTH;
-      var structured = cleanBase.match(/^(job-)(.+?)(-type-(?:BOL|Receipt|Other)-\d+)$/i) ||
-                        cleanBase.match(/^(job-)(.+?)(-\d+)$/i);
-
-      if (structured) {
-        var prefix = structured[1];
-        var jobPart = structured[2];
-        var tail = structured[3];
-        var newJobLength = Math.max(0, jobPart.length - overBy);
-        jobPart = jobPart.substring(0, newJobLength);
-        return prefix + jobPart + tail + suffix + ext;
-      }
-
-      // Couldn't parse the expected job-###-type-###-timestamp structure
-      // (unexpected/legacy name format) — fall back to trimming from the
-      // end. Rare, and better than failing the archive entirely.
-      var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length;
-      return cleanBase.substring(0, maxBaseLength) + suffix + ext;
+      var uid = (id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-6);
+      var disambiguator = uid ? '-' + uid : '';
+      var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length - disambiguator.length;
+      if (maxBaseLength < 0) maxBaseLength = 0;
+      var trimmedBase = cleanBase.substring(0, maxBaseLength);
+      return trimmedBase + disambiguator + suffix + ext;
     }
 
     function loadPhotos() {
@@ -432,7 +422,7 @@
         var record = currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
         if (!record) return null;
 
-        var newName = toggleArchiveName(record.name, archiving);
+        var newName = toggleArchiveName(record.name, record.id, archiving);
         var updatedEntity = Object.assign({}, record, { name: newName });
         return ['Set', { typeName: 'MediaFile', entity: updatedEntity }];
       }).filter(Boolean);
