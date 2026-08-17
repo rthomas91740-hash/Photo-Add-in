@@ -103,6 +103,7 @@
     <button id="selectVisibleBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">✅ Select Visible</button>
     <button id="printBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:none;background:#1a73e8;color:white;cursor:pointer;">🖨️ Print Selected</button>
     <button id="archiveBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">🗄️ Archive Selected</button>
+    <button id="deleteBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #e0a0a0;background:#fdecea;color:#c0392b;cursor:pointer;">🗑️ Delete Selected</button>
     <label style="font-size:14px;display:flex;align-items:center;gap:6px;">
       <input type="checkbox" id="showArchivedToggle"> Show archived
     </label>
@@ -152,6 +153,7 @@
       });
       document.getElementById('printBtn').addEventListener('click', printSelected);
       document.getElementById('archiveBtn').addEventListener('click', archiveSelected);
+      document.getElementById('deleteBtn').addEventListener('click', deleteSelected);
       document.getElementById('showArchivedToggle').addEventListener('change', function () {
         var showArchived = this.checked;
         document.getElementById('archiveBtn').textContent = showArchived ? '↩️ Unarchive Selected' : '🗄️ Archive Selected';
@@ -434,7 +436,45 @@
       });
     }
 
-    function printSelected() {
+    function deleteSelected() {
+      var checked = Array.prototype.slice.call(
+        document.querySelectorAll('#tableBody input[type=checkbox]:checked')
+      );
+      if (!checked.length) {
+        alert('Check at least one row first.');
+        return;
+      }
+
+      var records = checked.map(function (cb) {
+        return currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
+      }).filter(Boolean);
+
+      var preview = records.slice(0, 5).map(function (r) {
+        return '• ' + extractJobNumber(r.name);
+      }).join('\n');
+      if (records.length > 5) {
+        preview += '\n...and ' + (records.length - 5) + ' more';
+      }
+
+      var confirmed = confirm(
+        'Permanently delete ' + records.length + ' photo(s)? This cannot be undone.\n\n' + preview
+      );
+      if (!confirmed) return;
+
+      setStatus('Deleting ' + records.length + ' photo(s)...');
+
+      var calls = records.map(function (r) {
+        return ['Remove', { typeName: 'MediaFile', entity: { id: r.id } }];
+      });
+
+      geotabApi.multiCall(calls, function () {
+        loadPhotos();
+      }, function (err) {
+        setStatus('Error deleting photos: ' + err);
+      });
+    }
+
+
       var checked = Array.prototype.slice.call(
         document.querySelectorAll('#tableBody input[type=checkbox]:checked')
       );
