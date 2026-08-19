@@ -23,8 +23,17 @@
       border-radius: 8px;
       margin-bottom: 14px;
     }
-    #cameraBtn {
-      background: #1a73e8;
+    #photoType {
+      width: 100%;
+      max-width: 320px;
+      box-sizing: border-box;
+      padding: 14px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      margin-bottom: 14px;
+    }
+    #cameraBtn, #chooseExistingBtn {
       color: white;
       border: none;
       padding: 16px 24px;
@@ -32,8 +41,11 @@
       border-radius: 8px;
       width: 100%;
       max-width: 320px;
+      margin-bottom: 12px;
     }
-    #cameraBtn:disabled {
+    #cameraBtn { background: #1a73e8; }
+    #chooseExistingBtn { background: #5f6368; }
+    #cameraBtn:disabled, #chooseExistingBtn:disabled {
       background: #aac3ec;
     }
     #preview {
@@ -65,17 +77,21 @@
 
   <h2>New Job Photo</h2>
 
-  <input type="text" id="jobNumber" placeholder="Job # / Work Order #" maxlength="60">
-  <select id="photoType" style="width:100%;max-width:320px;box-sizing:border-box;padding:14px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin-bottom:14px;">
+  <input type="text" id="jobNumber" placeholder="Job # / Work Order #">
+  <select id="photoType">
     <option value="BOL">BOL</option>
     <option value="Receipt">Receipt</option>
     <option value="Other">Other</option>
   </select>
 
-  <!-- Fallback file input, used only when Drive's native camera API isn't available
-       (e.g. testing this page in a regular desktop browser). -->
-  <input type="file" accept="image/*" capture="environment" id="fileInput" style="display:none">
+  <!-- Used for BOTH buttons below — no "capture" attribute on the fallback
+       input for existing-photo selection, so it opens the phone's regular
+       photo library picker rather than forcing the camera. -->
+  <input type="file" accept="image/*" capture="environment" id="fileInputCamera" style="display:none">
+  <input type="file" accept="image/*" id="fileInputLibrary" style="display:none">
+
   <button id="cameraBtn">📷 Take Photo</button>
+  <button id="chooseExistingBtn">🖼️ Choose Existing Photo</button>
 
   <img id="preview" alt="preview">
   <button id="uploadBtn">Upload to Geotab</button>
@@ -83,7 +99,6 @@
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
-    var MAX_NAME_LENGTH = 128; // Geotab's hard cap on entity Name fields
 
     var geotabApi = null;
     var geotabState = null;
@@ -94,24 +109,30 @@
 
     function main() {
       var jobNumberEl = document.getElementById('jobNumber');
-      var fileInput = document.getElementById('fileInput');
+      var photoTypeEl = document.getElementById('photoType');
+      var fileInputCamera = document.getElementById('fileInputCamera');
+      var fileInputLibrary = document.getElementById('fileInputLibrary');
       var cameraBtn = document.getElementById('cameraBtn');
+      var chooseExistingBtn = document.getElementById('chooseExistingBtn');
       var preview = document.getElementById('preview');
       var uploadBtn = document.getElementById('uploadBtn');
       var statusEl = document.getElementById('status');
 
-      cameraBtn.addEventListener('click', function () {
+      function requireJobNumber() {
         if (!jobNumberEl.value.trim()) {
-          statusEl.textContent = 'Enter a Job # before taking a photo.';
+          statusEl.textContent = 'Enter a Job # first.';
           jobNumberEl.focus();
-          return;
+          return false;
         }
+        return true;
+      }
+
+      // Live capture — uses Drive's native camera modal. Confirmed working
+      // correctly (full frame, no cropping) for actually taking a new photo.
+      cameraBtn.addEventListener('click', function () {
+        if (!requireJobNumber()) return;
 
         if (geotabApi && geotabApi.mobile && geotabApi.mobile.exists && geotabApi.mobile.exists()) {
-          // Native Drive camera — opens Drive's own capture modal
-          // (New Picture / Upload options) and hands us the image back
-          // as base64 data. More reliable inside Drive's webview than
-          // a plain HTML file input.
           statusEl.textContent = 'Opening camera...';
           geotabApi.mobile.camera.takePicture().then(function (base64Data) {
             selectedBlob = base64ToBlob(base64Data);
@@ -120,12 +141,28 @@
             statusEl.textContent = 'Camera error: ' + err;
           });
         } else {
-          // Fallback for testing in a regular browser (no native Drive camera available)
-          fileInput.click();
+          fileInputCamera.click();
         }
       });
 
-      fileInput.addEventListener('change', function (e) {
+      // Choosing an already-taken photo — deliberately bypasses Geotab's
+      // native "Upload" option inside the camera modal. That native path
+      // was found to crop/misplace photos (fitting them into the wrong
+      // canvas aspect ratio) when selecting an existing gallery photo.
+      // Using the phone's own file/photo picker instead avoids that bug
+      // entirely and returns the original, unmodified image.
+      chooseExistingBtn.addEventListener('click', function () {
+        if (!requireJobNumber()) return;
+        fileInputLibrary.click();
+      });
+
+      fileInputCamera.addEventListener('change', function (e) {
+        if (!e.target.files || !e.target.files[0]) return;
+        selectedBlob = e.target.files[0];
+        showPreview(selectedBlob);
+      });
+
+      fileInputLibrary.addEventListener('change', function (e) {
         if (!e.target.files || !e.target.files[0]) return;
         selectedBlob = e.target.files[0];
         showPreview(selectedBlob);
@@ -144,22 +181,17 @@
 
       uploadBtn.addEventListener('click', function () {
         if (!selectedBlob) return;
-        if (!jobNumberEl.value.trim()) {
-          statusEl.textContent = 'Enter a Job # before uploading.';
-          jobNumberEl.focus();
-          return;
-        }
+        if (!requireJobNumber()) return;
         if (!geotabApi) {
           statusEl.textContent = 'Not connected to Geotab yet — open this from inside Drive.';
           return;
         }
         statusEl.textContent = 'Creating record...';
-        uploadPhoto(selectedBlob, jobNumberEl.value.trim(), document.getElementById('photoType').value, statusEl, uploadBtn);
+        uploadPhoto(selectedBlob, jobNumberEl.value.trim(), photoTypeEl.value, statusEl, uploadBtn);
       });
     }
 
     function base64ToBlob(base64Data) {
-      // Handle both a raw base64 string and a data: URL, just in case.
       var raw = base64Data.indexOf(',') !== -1 ? base64Data.split(',')[1] : base64Data;
       var binary = atob(raw);
       var bytes = new Uint8Array(binary.length);
@@ -170,9 +202,6 @@
     }
 
     function resolveVehicleAndDriver() {
-      // Prefer Drive's native mobile API — official, documented methods
-      // for the current vehicle/driver, instead of digging through the
-      // raw state object.
       if (geotabApi && geotabApi.mobile && geotabApi.mobile.exists && geotabApi.mobile.exists()) {
         if (geotabApi.mobile.vehicle && geotabApi.mobile.vehicle.get) {
           geotabApi.mobile.vehicle.get().then(function (vehicle) {
@@ -186,11 +215,6 @@
         }
       }
 
-      // Also try the username-lookup fallback in parallel (not just when
-      // the native mobile API is unavailable) — if the native user.get()
-      // call fails silently or returns an unexpected shape, this still
-      // gets us a driver ID. Guarded so it won't stomp on a value the
-      // native call already set.
       if (geotabState) {
         if (!deviceId && geotabState.device && geotabState.device.id) {
           deviceId = geotabState.device.id;
@@ -222,22 +246,8 @@
     }
 
     function uploadPhoto(blob, jobNumber, photoType, statusEl, uploadBtn) {
-      // Job # and Type are both encoded into the filename so they're
-      // always retrievable from a plain MediaFile Get call.
       var safeJob = jobNumber.replace(/[^a-z0-9\-_]/gi, '_');
-
-      // Build the fixed (non-job) parts of the filename first, then work out
-      // exactly how much room is left for the job number itself, so the
-      // final name can never exceed Geotab's 128-character cap on Name —
-      // regardless of how long a driver's typed-in job number is.
-      var suffix = '-type-' + photoType + '-' + Date.now() + '.jpg';
-      var prefix = 'job-';
-      var maxSafeJobLength = MAX_NAME_LENGTH - prefix.length - suffix.length;
-      if (safeJob.length > maxSafeJobLength) {
-        safeJob = safeJob.substring(0, maxSafeJobLength);
-      }
-
-      var fileName = prefix + safeJob + suffix;
+      var fileName = 'job-' + safeJob + '-type-' + photoType + '-' + Date.now() + '.jpg';
 
       var entity = {
         name: fileName,
