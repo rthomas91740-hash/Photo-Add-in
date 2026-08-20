@@ -103,9 +103,11 @@
     <button id="selectVisibleBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">✅ Select Visible</button>
     <button id="printBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:none;background:#1a73e8;color:white;cursor:pointer;">🖨️ Print Selected</button>
     <button id="archiveBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #ccc;background:#eee;cursor:pointer;">🗄️ Archive Selected</button>
-    <button id="deleteBtn" style="padding:10px 16px;font-size:14px;border-radius:6px;border:1px solid #e0a0a0;background:#fdecea;color:#c0392b;cursor:pointer;">🗑️ Delete Selected</button>
     <label style="font-size:14px;display:flex;align-items:center;gap:6px;">
       <input type="checkbox" id="showArchivedToggle"> Show archived
+    </label>
+    <label style="font-size:14px;display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="showAllToggle"> Show all time (slower)
     </label>
     <span id="status" style="color:#666;"></span>
   </div>
@@ -118,6 +120,7 @@
         </th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Job #</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Type</th>
+        <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Label</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Date</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Vehicle</th>
         <th style="text-align:left;padding:14px 18px;background:#f0f0f0;font-weight:600;font-size:12px;text-transform:uppercase;color:#555;">Driver</th>
@@ -131,7 +134,6 @@
 
   <script>
     var SOLUTION_ID = "aZmY0NmZkYWItOGYzZC1hNj";
-    var MAX_NAME_LENGTH = 128; // Geotab's hard cap on entity Name fields
 
     var geotabApi = null;
     var sessionInfo = null;
@@ -153,12 +155,12 @@
       });
       document.getElementById('printBtn').addEventListener('click', printSelected);
       document.getElementById('archiveBtn').addEventListener('click', archiveSelected);
-      document.getElementById('deleteBtn').addEventListener('click', deleteSelected);
       document.getElementById('showArchivedToggle').addEventListener('change', function () {
         var showArchived = this.checked;
         document.getElementById('archiveBtn').textContent = showArchived ? '↩️ Unarchive Selected' : '🗄️ Archive Selected';
         renderFilteredTable();
       });
+      document.getElementById('showAllToggle').addEventListener('change', loadPhotos);
       loadPhotos();
     }
 
@@ -176,12 +178,14 @@
     // "job-4521-type-BOL-1699999999.jpg". Older photos (before Type existed)
     // used "job-4521-1699999999.jpg" — still parsed correctly, just with no type.
     function parseFileName(name) {
-      if (!name) return { job: '(none)', type: '(none)' };
+      if (!name) return { job: '(none)', type: '(none)', label: '(none)' };
+      var withLabel = name.match(/^job-(.+)-type-(BOL|Receipt|Other)-label-(.+)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
+      if (withLabel) return { job: withLabel[1], type: withLabel[2], label: withLabel[3] };
       var withType = name.match(/^job-(.+)-type-(BOL|Receipt|Other)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
-      if (withType) return { job: withType[1], type: withType[2] };
+      if (withType) return { job: withType[1], type: withType[2], label: '(none)' };
       var withoutType = name.match(/^job-(.+)-\d+(?:-ARCHIVED)?\.[a-z]+$/i);
-      if (withoutType) return { job: withoutType[1], type: '(none)' };
-      return { job: '(none)', type: '(none)' };
+      if (withoutType) return { job: withoutType[1], type: '(none)', label: '(none)' };
+      return { job: '(none)', type: '(none)', label: '(none)' };
     }
 
     function extractJobNumber(name) {
@@ -192,53 +196,26 @@
       return !!(name && /-ARCHIVED\.[a-z]+$/i.test(name));
     }
 
-    // Builds the archived/unarchived version of a name while guaranteeing
-    // the result never exceeds Geotab's 128-character Name cap AND can
-    // never collide with another record's name. Archiving only ever
-    // *adds* "-ARCHIVED" (9 chars) — for names already near the limit,
-    // room has to be made by trimming.
-    //
-    // Trimming is made collision-proof by appending a short slice of the
-    // record's own unique ID whenever trimming happens. Trying to instead
-    // parse out and preserve the timestamp portion of the original name
-    // is fragile — any record whose name doesn't match the exact expected
-    // pattern falls back to a blind end-trim, which can strip the one
-    // part that made it unique. The record ID is guaranteed unique by
-    // Geotab itself, so basing the disambiguator on it removes that risk
-    // entirely, regardless of how the original name was structured.
-    function toggleArchiveName(name, id, archiving) {
-      var extMatch = name.match(/(\.[a-z]+)$/i);
-      var ext = extMatch ? extMatch[1] : '';
-      var base = ext ? name.slice(0, name.length - ext.length) : name;
-      var cleanBase = base.replace(/-ARCHIVED$/i, '');
-
-      if (!archiving) {
-        return cleanBase + ext;
-      }
-
-      var suffix = '-ARCHIVED';
-      var fullWithSuffix = cleanBase + suffix + ext;
-      if (fullWithSuffix.length <= MAX_NAME_LENGTH) {
-        return fullWithSuffix;
-      }
-
-      var uid = (id || '').replace(/[^a-zA-Z0-9]/g, '').slice(-6);
-      var disambiguator = uid ? '-' + uid : '';
-      var maxBaseLength = MAX_NAME_LENGTH - suffix.length - ext.length - disambiguator.length;
-      if (maxBaseLength < 0) maxBaseLength = 0;
-      var trimmedBase = cleanBase.substring(0, maxBaseLength);
-      return trimmedBase + disambiguator + suffix + ext;
-    }
-
     function loadPhotos() {
       setStatus('Loading...');
       document.getElementById('tableBody').innerHTML = '';
 
       var search = { solutionId: SOLUTION_ID };
       var dateVal = document.getElementById('dateFilter').value;
+      var showAll = document.getElementById('showAllToggle').checked;
+
       if (dateVal) {
+        // A specific day was picked — narrow to just that day.
         search.fromDate = new Date(dateVal + 'T00:00:00').toISOString();
         search.toDate = new Date(dateVal + 'T23:59:59').toISOString();
+      } else if (!showAll) {
+        // Default: last 7 days only. Loading the full history on every
+        // page open doesn't scale once a client has months of photos —
+        // "Show all time" below is there for anyone who explicitly needs
+        // to search further back.
+        var sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        search.fromDate = sevenDaysAgo.toISOString();
       }
 
       geotabApi.call('Get', {
@@ -312,6 +289,7 @@
         var parsed = parseFileName(r.name);
         var jobNumber = parsed.job;
         var photoType = parsed.type;
+        var photoLabel = parsed.label;
 
         if (filterText && jobNumber.toLowerCase().indexOf(filterText) === -1) return;
         if (typeFilter && photoType !== typeFilter) return;
@@ -334,7 +312,7 @@
         checkTd.appendChild(checkbox);
         tr.appendChild(checkTd);
 
-        [jobNumber, photoType, dateStr, deviceName, driverName].forEach(function (val) {
+        [jobNumber, photoType, photoLabel, dateStr, deviceName, driverName].forEach(function (val) {
           var td = document.createElement('td');
           td.style.cssText = 'padding:14px 18px;font-size:14px;';
           td.textContent = val;
@@ -416,15 +394,20 @@
       }
 
       var showArchived = document.getElementById('showArchivedToggle').checked;
-      var archiving = !showArchived;
-      var actionLabel = archiving ? 'Archiving' : 'Unarchiving';
+      var actionLabel = showArchived ? 'Unarchiving' : 'Archiving';
       setStatus(actionLabel + ' ' + checked.length + ' photo(s)...');
 
       var calls = checked.map(function (cb) {
         var record = currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
         if (!record) return null;
 
-        var newName = toggleArchiveName(record.name, record.id, archiving);
+        var newName;
+        if (showArchived) {
+          newName = record.name.replace(/-ARCHIVED(\.[a-z]+)$/i, '$1');
+        } else {
+          newName = record.name.replace(/(\.[a-z]+)$/i, '-ARCHIVED$1');
+        }
+
         var updatedEntity = Object.assign({}, record, { name: newName });
         return ['Set', { typeName: 'MediaFile', entity: updatedEntity }];
       }).filter(Boolean);
@@ -435,45 +418,6 @@
         setStatus('Error updating photos: ' + err);
       });
     }
-
-    function deleteSelected() {
-      var checked = Array.prototype.slice.call(
-        document.querySelectorAll('#tableBody input[type=checkbox]:checked')
-      );
-      if (!checked.length) {
-        alert('Check at least one row first.');
-        return;
-      }
-
-      var records = checked.map(function (cb) {
-        return currentRecords.filter(function (r) { return r.id === cb.dataset.id; })[0];
-      }).filter(Boolean);
-
-      var preview = records.slice(0, 5).map(function (r) {
-        return '• ' + extractJobNumber(r.name);
-      }).join('\n');
-      if (records.length > 5) {
-        preview += '\n...and ' + (records.length - 5) + ' more';
-      }
-
-      var confirmed = confirm(
-        'Permanently delete ' + records.length + ' photo(s)? This cannot be undone.\n\n' + preview
-      );
-      if (!confirmed) return;
-
-      setStatus('Deleting ' + records.length + ' photo(s)...');
-
-      var calls = records.map(function (r) {
-        return ['Remove', { typeName: 'MediaFile', entity: { id: r.id } }];
-      });
-
-      geotabApi.multiCall(calls, function () {
-        loadPhotos();
-      }, function (err) {
-        setStatus('Error deleting photos: ' + err);
-      });
-    }
-
 
     function printSelected() {
       var checked = Array.prototype.slice.call(
@@ -508,6 +452,7 @@
         var parsed = parseFileName(record.name);
         var jobNumber = parsed.job;
         var photoType = parsed.type;
+        var photoLabel = parsed.label;
         var deviceName = (record.device && record.device.id && deviceNameCache[record.device.id]) || 'Unassigned';
         var driverName = (record.driver && record.driver.id && driverNameCache[record.driver.id]) || 'Unassigned';
         var dateStr = record.fromDate ? new Date(record.fromDate).toLocaleString() : 'Unknown date';
@@ -543,7 +488,7 @@
 
           var stampRow = document.createElement('div');
           stampRow.style.cssText = 'font-size:14px;margin-top:12px;';
-          stampRow.textContent = 'Job #: ' + jobNumber + '  |  Type: ' + photoType + '  |  Date: ' + dateStr + '  |  Vehicle: ' + deviceName + '  |  Driver: ' + driverName;
+          stampRow.textContent = 'Job #: ' + jobNumber + '  |  Label: ' + photoLabel + '  |  Type: ' + photoType + '  |  Date: ' + dateStr + '  |  Vehicle: ' + deviceName + '  |  Driver: ' + driverName;
 
           card.appendChild(img);
           card.appendChild(stampRow);
